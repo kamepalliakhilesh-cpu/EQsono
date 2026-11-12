@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f0f10">
+  <title>Sonora | Speaker Receiver</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="/css/receiver-sonora.css">
+</head>
+<body>
+
+  <div class="receiver-page">
+
+    <!-- Top Header -->
+    <header class="receiver-header">
+      <div class="brand">
+        <span class="brand-symbol" aria-hidden="true">
+          <i></i><i></i><i></i>
+        </span>
+        <span class="brand-name">Sonora</span>
+      </div>
+      <div class="receiver-badge">
+        <span>Receiver mode</span>
+      </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="receiver-main">
+
+      <!-- SCREEN 1: ROOM CODE INPUT (Default) -->
+      <div id="joinScreen">
+        <div class="eyebrow">Local sync</div>
+        <h1>
+          <span>Join soundstage</span>
+        </h1>
+        <p class="join-description">Turn this phone into a synchronized wireless speaker</p>
+
+        <div class="receiver-speaker-art">
+          <div class="speaker-grille">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+              <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+            </svg>
+          </div>
+        </div>
+
+        <form class="join-form" id="joinForm">
+          <label for="roomCodeInput">Room code</label>
+          <input type="text" id="roomCodeInput" maxlength="12" placeholder="ABC 123" autocomplete="off" required>
+          <button type="submit" id="btnJoinRoom">
+            <span>Connect speaker</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+              <polyline points="12 5 19 12 12 19"></polyline>
+            </svg>
+          </button>
+        </form>
+
+        <div class="join-error" id="joinError" role="alert"></div>
+
+        <div class="receiver-network">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
+            <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
+            <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+            <line x1="12" y1="20" x2="12.01" y2="20"></line>
+          </svg>
+          <span>Keep phone on the same Wi-Fi network as host</span>
+        </div>
+
+        <a class="receiver-back" href="/">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <line x1="19" y1="12" x2="5" y2="12"></line>
+            <polyline points="12 19 5 12 12 5"></polyline>
+          </svg>
+          <span>Return to host console</span>
+        </a>
+      </div>
+
+      <!-- SCREEN 2: ACTIVE SPEAKER & AUDIO UNLOCK (Revealed Once Joined) -->
+      <div class="active-screen" id="activeScreen">
+        <div class="eyebrow" id="activeRoomEyebrow">Connected speaker</div>
+        <h1 class="active-channel-title">
+          <span id="activeChannelRoleText">Front Left</span>
+          <span class="channel-status-sub">Channel assigned</span>
+        </h1>
+
+        <!-- Tactile Audio Unlock Trigger Button -->
+        <div class="receiver-play-wrapper">
+          <div class="pulse-aura" id="pulseAura"></div>
+          <button class="receiver-play" id="btnActivateSpeaker" type="button" aria-label="Activate audio playback">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" id="playIconSvg">
+              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+          </button>
+        </div>
+
+        <div class="audio-activation-note" id="audioActivationStatus">
+          Tap circle to activate audio stream
+        </div>
+
+        <!-- Sync Quality Tier Pill -->
+        <div class="sync-quality-pill" id="syncQualityPill">
+          Calibrating clock...
+        </div>
+
+        <!-- On-Screen Speaker Volume Control -->
+        <div class="receiver-volume-box">
+          <div class="receiver-volume-header">
+            <label for="speakerVolume">Speaker output</label>
+            <strong id="speakerVolumeVal">100%</strong>
+          </div>
+          <div class="receiver-volume-slider-row">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+            </svg>
+            <input type="range" id="speakerVolume" min="0" max="1.5" step="0.05" value="1.0">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+              <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+            </svg>
+          </div>
+        </div>
+
+        <!-- Telemetry Details Grid -->
+        <div class="receiver-details">
+          <div>
+            <span>Room</span>
+            <strong id="detailRoomName">Studio room</strong>
+          </div>
+          <div>
+            <span>Channel role</span>
+            <strong id="detailChannelRole">Front Left</strong>
+          </div>
+          <div>
+            <span>Network ping</span>
+            <strong id="detailRtt">-- ms</strong>
+          </div>
+          <div>
+            <span>Clock offset</span>
+            <strong id="detailOffset">-- ms</strong>
+          </div>
+        </div>
+
+        <button class="leave-room-button" id="btnLeaveRoom" type="button">
+          Disconnect
+        </button>
+      </div>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="receiver-footer">
+      <span>Sonora Receiver 1.0</span>
+      <span>NTP Phase Lock</span>
+    </footer>
+
+  </div>
+
+  <div class="receiver-toast" id="receiverToast" role="status" aria-live="polite"></div>
+
+  <!-- Scripts -->
+  <script src="/js/ntp-sync.js"></script>
+  <script src="/js/audio-codec.js"></script>
+  <script src="/js/sonora-receiver.js"></script>
+</body>
+</html>

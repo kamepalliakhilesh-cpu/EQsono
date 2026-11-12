@@ -1,0 +1,15 @@
+{
+  "name": "eqsono",
+  "version": "1.0.0",
+  "description": "Multi-Device Audio Sync & Adaptive Dolby Spatial Surround Sound System",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "qrcode": "^1.5.3",
+    "ws": "^8.17.0"
+  }
+}
