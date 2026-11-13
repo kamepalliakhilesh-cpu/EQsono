@@ -1,9 +1,9 @@
 /**
- * High-Performance IMA-ADPCM Audio Codec
+ * High-Performance Stateful IMA-ADPCM Audio Codec
  * Compresses 16-bit linear PCM down to 4 bits per sample (4:1 compression ratio).
- * Shrinks packet sizes by ~75% (from 4,108 bytes down to 1,040 bytes),
- * allowing every audio frame to fit inside a single standard 1,500-byte MTU frame
- * with zero IP fragmentation, minimal network latency, and near-zero CPU usage (<0.02ms/frame).
+ * Maintains continuous per-channel predictor state (valprev & step index) across
+ * consecutive packets while embedding the exact starting predictor state in each
+ * 4-byte packet header so lost packets never corrupt downstream decoding.
  */
 
 (function (global) {
@@ -21,44 +21,69 @@
     -1, -1, -1, -1, 2, 4, 6, 8
   ]);
 
+  // Persistent per-channel encoder predictor state: channelId -> { valprev, index, initialized }
+  const channelEncoderState = new Map();
+
   const AudioCodec = {
+    resetState(channelId) {
+      if (channelId === undefined) {
+        channelEncoderState.clear();
+      } else {
+        channelEncoderState.delete(channelId);
+      }
+    },
+
     /**
-     * Encodes 16-bit linear PCM into IMA-ADPCM bytes.
+     * Encodes 16-bit linear PCM into IMA-ADPCM bytes with stateful cross-frame continuity.
      * @param {Int16Array} samples - Input PCM samples.
      * @param {Uint8Array} outBytes - Pre-allocated output buffer.
      * @param {number} outOffset - Byte offset into outBytes to start writing.
-     * @param {number} length - Optional sample count (avoids allocating a subarray).
+     * @param {number} length - Sample count (must be even).
+     * @param {number} channelId - Channel identifier for persistent predictor state.
      * @returns {number} Number of bytes written (4 bytes header + length / 2).
      */
-    encodeImaAdpcm(samples, outBytes, outOffset = 0, length = samples.length) {
-      const len = Math.min(length, samples.length);
-      const valprev = samples[0] || 0;
+    encodeImaAdpcm(samples, outBytes, outOffset = 0, length = samples.length, channelId = 255) {
+      const len = Math.min(length, samples.length) & ~1;
+      if (len <= 0) return 0;
 
-      // Pick a starting step close to the first real sample delta. Starting at
-      // index 0 makes the codec crawl upward for the first few milliseconds.
-      let index = 0;
-      if (len > 1) {
-        const firstDelta = Math.abs(samples[1] - valprev);
+      let state = channelEncoderState.get(channelId);
+      if (!state || !state.initialized) {
+        const initialVal = samples[0] || 0;
+        // Estimate initial step index from the maximum sample-to-sample derivative in the first 16 samples
+        let maxDelta = 0;
+        const scanLen = Math.min(len, 16);
+        for (let k = 1; k < scanLen; k++) {
+          const d = Math.abs(samples[k] - samples[k - 1]);
+          if (d > maxDelta) maxDelta = d;
+        }
         let lo = 0;
         let hi = 88;
         while (lo < hi) {
           const mid = (lo + hi) >> 1;
-          if (stepTable[mid] < firstDelta) lo = mid + 1;
+          if (stepTable[mid] < maxDelta) lo = mid + 1;
           else hi = mid;
         }
-        index = Math.max(0, Math.min(88, lo));
+        state = {
+          valprev: initialVal,
+          index: Math.max(0, Math.min(88, lo)),
+          initialized: true
+        };
+        channelEncoderState.set(channelId, state);
       }
 
-      // 4-byte header: Int16 initial sample (2 bytes) + Uint8 initial step index (1 byte) + reserved (1 byte)
-      const view = new DataView(outBytes.buffer, outBytes.byteOffset + outOffset);
-      view.setInt16(0, valprev, true);
+      let statePrev = state.valprev;
+      let index = state.index;
+
+      // Write exact pre-loop predictor state into the 4-byte packet header so the receiver
+      // starts decoding sample 0 from this exact state (self-healing on packet drops).
+      const view = new DataView(outBytes.buffer, outBytes.byteOffset + outOffset, 4);
+      view.setInt16(0, statePrev, true);
       view.setUint8(2, index);
       view.setUint8(3, 0);
 
       let outIdx = outOffset + 4;
       let buffer = 0;
       let bufferstep = false;
-      let statePrev = valprev;
 
       for (let i = 0; i < len; i++) {
         const val = samples[i];
@@ -113,6 +138,9 @@
         }
       }
 
+      state.valprev = statePrev;
+      state.index = index;
+
       return 4 + (len >> 1);
     },
 
@@ -124,7 +152,7 @@
      * @param {Float32Array} outSamples - Pre-allocated Float32Array to write to.
      */
     decodeImaAdpcm(inBytes, inOffset, numSamples, outSamples) {
-      const view = new DataView(inBytes.buffer, inBytes.byteOffset + inOffset);
+      const view = new DataView(inBytes.buffer, inBytes.byteOffset + inOffset, 4);
       let valprev = view.getInt16(0, true);
       let index = view.getUint8(2);
       if (index > 88) index = 88;
@@ -132,6 +160,7 @@
       let inIdx = inOffset + 4;
       let buffer = 0;
       let bufferstep = false;
+      const invScale = 1.0 / 32768.0;
 
       for (let i = 0; i < numSamples; i++) {
         let delta;
@@ -163,7 +192,7 @@
         if (index < 0) index = 0;
         else if (index > 88) index = 88;
 
-        outSamples[i] = valprev / 32768.0;
+        outSamples[i] = valprev * invScale;
       }
     }
   };

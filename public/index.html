@@ -78,7 +78,7 @@
         </a>
 
         <div class="sidebar-version">
-          <span>Sonora Console 1.0</span>
+          <span>Sonora Console 1.1</span>
           <span>NTP Synced</span>
         </div>
       </div>
@@ -159,7 +159,7 @@
               <span class="stat-title">Connected speakers</span>
               <div class="stat-value">
                 <span id="statSpeakerCount">0</span>
-                <span class="stat-capacity">of 12</span>
+                <span class="stat-capacity">of 6</span>
               </div>
             </div>
           </div>
@@ -268,7 +268,7 @@
                 <span class="stage-speaker-label" id="slotLabelSR">Surround R</span>
               </div>
 
-              <div class="stage-coordinate">Buffer: 150ms</div>
+              <div class="stage-coordinate">Buffer: 180ms</div>
             </div>
 
             <!-- Stage Footer -->
@@ -523,20 +523,21 @@
           <div class="settings-row">
             <div>
               <label class="settings-label" for="settingCodec">Audio encoding</label>
-              <p>Linear PCM delivers lossless, studio-clear audio across devices</p>
+              <p>Smart Adaptive uses lossless single-MTU PCM for 1–2 speakers and stateful 4:1 ADPCM for 3–6 speakers</p>
             </div>
             <select class="settings-select" id="settingCodec">
-              <option value="pcm" selected>Linear PCM (Lossless, crystal clear studio audio)</option>
-              <option value="adpcm">ADPCM (Low bandwidth, 4:1 compression)</option>
+              <option value="auto" selected>Smart Adaptive (Auto PCM / Stateful ADPCM)</option>
+              <option value="pcm">Linear PCM (Lossless 16-bit studio audio)</option>
+              <option value="adpcm">Stateful ADPCM (Low bandwidth, 4:1 compression)</option>
             </select>
           </div>
 
           <div class="settings-row">
             <div>
               <h3>Transport protocol</h3>
-              <p>Local WebSocket with TCP_NODELAY enabled</p>
+              <p>Local WebSocket with TCP_NODELAY &amp; 24KB anti-bufferbloat cap (max 6 speakers)</p>
             </div>
-            <span class="mono-badge">Local Direct</span>
+            <span class="mono-badge">Single-MTU Direct</span>
           </div>
 
           <div class="settings-row">
@@ -545,8 +546,8 @@
               <p>Lead buffer delay to absorb network jitter across multiple devices</p>
             </div>
             <div class="slider-group">
-              <input type="range" id="hostDelaySlider" min="60" max="600" step="10" value="150">
-              <span class="mono-value" id="hostDelayValue">150ms</span>
+              <input type="range" id="hostDelaySlider" min="60" max="600" step="10" value="180">
+              <span class="mono-value" id="hostDelayValue">180ms</span>
             </div>
           </div>
 
@@ -556,7 +557,7 @@
               <p>Quick latency calibration for local Wi-Fi vs public cellular networks</p>
             </div>
             <div class="profile-buttons-group">
-              <button type="button" class="stat-chip profile-btn" data-delay="150">Studio Wi-Fi (150ms)</button>
+              <button type="button" class="stat-chip profile-btn" data-delay="180">Studio Wi-Fi (180ms)</button>
               <button type="button" class="stat-chip profile-btn" data-delay="350">Public Internet (350ms)</button>
               <button type="button" class="stat-chip profile-btn" data-delay="500">High Jitter / 4G (500ms)</button>
             </div>
@@ -631,7 +632,7 @@
       <button class="modal-close" id="btnCloseAddModal" type="submit" value="close" aria-label="Close">✕</button>
     </form>
     <h2 id="addSpeakerDialogTitle">Add speaker</h2>
-    <p>Scan with any mobile phone on this Wi-Fi network:</p>
+    <p>Scan with any mobile phone on this Wi-Fi network (up to 6 speakers):</p>
 
     <div class="modal-qr-box">
       <div class="qr-container">
@@ -687,7 +688,7 @@
     <h2 id="guideDialogTitle">Connection guide</h2>
     <p>Follow these steps to turn phones into synchronized wireless speakers:</p>
     <ol class="guide-steps">
-      <li>Connect the computer and all mobile devices to the same Wi-Fi router.</li>
+      <li>Connect the computer and all mobile devices to the same Wi-Fi router (up to 6 phones).</li>
       <li>Scan the QR code or open the receiver URL on each phone.</li>
       <li>Tap the speaker activation circle on the phone to enable audio playback.</li>
       <li>On this host computer, click <strong>Start broadcast</strong> and select the audio to stream.</li>

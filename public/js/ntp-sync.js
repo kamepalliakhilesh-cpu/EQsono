@@ -1,19 +1,19 @@
 /**
  * High-Precision Network Time Protocol (NTP) Client
  * Calculates clock offset (Δt), Round-Trip Time (RTT), jitter, and crystal skew rate.
- * Uses microsecond-resolution epoch timestamps, IQR outlier rejection, and exponential
- * drift smoothing to achieve sub-millisecond phase synchronization across Wi-Fi.
+ * Uses microsecond-resolution epoch timestamps, minimum-RTT quartile filtering,
+ * and slew-rate clamped smoothing so Wi-Fi traffic bursts never cause audio phase jumps.
  */
 class NtpSync {
   constructor(ws, onSyncCallback) {
     this.ws = ws;
     this.onSyncCallback = onSyncCallback;
     this.samples = [];
-    this.maxSamples = 20;
+    this.maxSamples = 24;
     this.offset = 0; // ServerMasterTime = ClientLocalTime + offset
     this.rtt = 0;
     this.jitter = 0;
-    this.skewRate = 0; // Clock frequency skew (ms per ms)
+    this.skewRate = 0;
     this.lastSyncLocalTime = 0;
     this.isSynced = false;
     this.syncQuality = 'CALIBRATING'; // 'STUDIO_LOCK' | 'PRECISION' | 'GOOD' | 'CALIBRATING'
@@ -33,19 +33,19 @@ class NtpSync {
   start() {
     this.stop();
 
-    // Fast lock: 10 rapid pings every 70ms to lock accurate sync in <700ms
+    // Fast initial lock: 12 rapid pings every 60ms (~720ms)
     let count = 0;
     this.sendPing();
     this.rapidInterval = setInterval(() => {
       this.sendPing();
       count++;
-      if (count >= 10) {
+      if (count >= 12) {
         clearInterval(this.rapidInterval);
         this.rapidInterval = null;
-        // Continuous maintenance pings every 2 seconds
-        this.pingInterval = setInterval(() => this.sendPing(), 2000);
+        // Maintenance pings every 2.5 seconds
+        this.pingInterval = setInterval(() => this.sendPing(), 2500);
       }
-    }, 70);
+    }, 60);
   }
 
   stop() {
@@ -74,54 +74,57 @@ class NtpSync {
     const t1 = data.serverReceiveTime;
     const t2 = data.serverSendTime;
 
-    // Server internal processing time
     const serverDelay = Math.max(0, t2 - t1);
-    // Total round trip duration minus server turn-around
     const rtt = Math.max(0, (t3 - t0) - serverDelay);
-
-    // Standard RFC 5905 NTP clock offset formula:
-    // θ = ((t1 - t0) + (t2 - t3)) / 2
     const offset = ((t1 - t0) + (t2 - t3)) / 2;
+
+    // Once locked, discard extreme Wi-Fi congestion spike pongs that suffer asymmetric queuing
+    if (this.isSynced && this.samples.length >= 8) {
+      const minRecordedRtt = Math.min(...this.samples.map(s => s.rtt));
+      if (rtt > Math.max(45, minRecordedRtt * 2.2 + 12)) {
+        return;
+      }
+    }
 
     this.samples.push({ rtt, offset, timestamp: t3 });
     if (this.samples.length > this.maxSamples) {
       this.samples.shift();
     }
 
-    // Outlier rejection via lowest-RTT selection (minimal network queuing delay)
+    // Outlier rejection via lowest-25% RTT selection (packets with least Wi-Fi queuing delay)
     const sortedByRtt = [...this.samples].sort((a, b) => a.rtt - b.rtt);
-    const bestCount = Math.max(1, Math.ceil(sortedByRtt.length * 0.45));
+    const bestCount = Math.max(1, Math.ceil(sortedByRtt.length * 0.30));
     const bestSamples = sortedByRtt.slice(0, bestCount);
 
-    // Median offset of best low-latency samples
+    // Median offset of best low-RTT samples
     const sortedOffsets = bestSamples.map(s => s.offset).sort((a, b) => a - b);
     const medianOffset = sortedOffsets[Math.floor(sortedOffsets.length / 2)];
 
-    // Filtered RTT & smoothed offset deviation from lowest-RTT samples
     const bestAvgRtt = bestSamples.reduce((sum, s) => sum + s.rtt, 0) / bestSamples.length;
     const offsetDev = bestSamples.reduce((sum, s) => sum + Math.abs(s.offset - medianOffset), 0) / bestSamples.length;
 
-    // Smooth clock offset filter to prevent phase jumps during audio playback
+    // Slew-rate clamped clock offset filter to prevent phase jumps during audio playback
     if (!this.isSynced || this.samples.length < 4) {
       this.offset = medianOffset;
       this.jitter = offsetDev;
     } else {
-      this.offset = (this.offset * 0.85) + (medianOffset * 0.15);
-      this.jitter = (this.jitter * 0.75) + (offsetDev * 0.25);
+      const rawStep = (medianOffset - this.offset) * 0.12;
+      const clampedStep = Math.max(-0.8, Math.min(0.8, rawStep));
+      this.offset += clampedStep;
+      this.jitter = (this.jitter * 0.80) + (offsetDev * 0.20);
     }
 
     this.lastSyncLocalTime = t3;
     this.rtt = Math.round(bestAvgRtt);
-    this.isSynced = this.samples.length >= 2;
+    this.isSynced = this.samples.length >= 3;
 
-    // Evaluate sync quality tier
     const roundedJitter = Math.round(this.jitter * 10) / 10;
     if (this.rtt < 18 && roundedJitter <= 3) {
-      this.syncQuality = 'STUDIO_LOCK'; // Sub-millisecond error
+      this.syncQuality = 'STUDIO_LOCK';
     } else if (this.rtt < 40 && roundedJitter <= 8) {
-      this.syncQuality = 'PRECISION';   // ~1-3ms error
+      this.syncQuality = 'PRECISION';
     } else {
-      this.syncQuality = 'GOOD';        // ~5-8ms error
+      this.syncQuality = 'GOOD';
     }
 
     if (this.onSyncCallback) {
@@ -143,5 +146,4 @@ class NtpSync {
   }
 }
 
-// Make globally available in browser
 window.NtpSync = NtpSync;

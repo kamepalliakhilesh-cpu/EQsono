@@ -26,7 +26,13 @@ if (sslCertPath && sslKeyPath && fs.existsSync(sslCertPath) && fs.existsSync(ssl
   server = http.createServer(app);
 }
 
-const wss = new WebSocket.Server({ server, path: '/ws', maxPayload: 64 * 1024 });
+// Disable perMessageDeflate so binary audio frames bypass zlib compression latency and CPU overhead
+const wss = new WebSocket.Server({
+  server,
+  path: '/ws',
+  maxPayload: 64 * 1024,
+  perMessageDeflate: false
+});
 
 function safeSendJson(ws, payload) {
   if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -36,7 +42,10 @@ function safeSendJson(ws, payload) {
 }
 
 const PORT = process.env.PORT || 3000;
-const MAX_RECEIVERS_PER_ROOM = 12;
+// Capped at 6 connected speakers (exact 5.1 surround array) to prevent Wi-Fi unicast airtime saturation
+const MAX_RECEIVERS_PER_ROOM = 6;
+// Tight per-socket backpressure cap (~24 KB) to prevent multi-second TCP bufferbloat queues on slow links
+const MAX_RECEIVER_BUFFER_BYTES = 24 * 1024;
 
 function sanitizeText(val, fallback, maxLen = 40) {
   const cleaned = String(val || '')
@@ -115,7 +124,7 @@ function getOrCreateRoom(requestedCode, hostSecret, customName) {
 // Helper: Get local network IPv4 address prioritizing Wi-Fi
 function getLocalIpAddress() {
   const interfaces = os.networkInterfaces();
-  
+
   for (const name of Object.keys(interfaces)) {
     if (/wi-fi|wlan|wireless/i.test(name)) {
       for (const iface of interfaces[name]) {
@@ -178,7 +187,7 @@ app.get('/favicon.ico', (req, res) => {
 
 // Healthcheck endpoint for cloud load balancers & container orchestrators
 app.get('/health', (req, res) => {
-  res.json({ ok: true, rooms: rooms.size, uptime: Math.round(process.uptime()) });
+  res.json({ ok: true, rooms: rooms.size, maxReceiversPerRoom: MAX_RECEIVERS_PER_ROOM, uptime: Math.round(process.uptime()) });
 });
 
 // Specific routes
@@ -224,7 +233,6 @@ app.get('/api/info', async (req, res) => {
     hostUrl = `${scheme}://${activeLanIp}${portSuffix}`;
     receiverUrl = `${scheme}://${activeLanIp}${portSuffix}/receiver?code=${encodeURIComponent(room.code)}`;
   } else {
-    // Cloud Public Deployment (e.g. Railway, Render, Fly.io, custom domain)
     hostUrl = `${proto}://${rawHost}`;
     receiverUrl = `${proto}://${rawHost}/receiver?code=${encodeURIComponent(room.code)}`;
     responseIps = [
@@ -252,6 +260,7 @@ app.get('/api/info', async (req, res) => {
       roomCode: room.code,
       roomName: room.name,
       hostSecret: room.hostSecret,
+      maxReceivers: MAX_RECEIVERS_PER_ROOM,
       qrCodeDataUrl,
       isCloud: !isLocalHost
     });
@@ -263,7 +272,7 @@ app.get('/api/info', async (req, res) => {
 // Endpoint to explicitly generate a new room
 app.post('/api/room/new', (req, res) => {
   const room = createRoom();
-  res.json({ roomCode: room.code, roomName: room.name, hostSecret: room.hostSecret });
+  res.json({ roomCode: room.code, roomName: room.name, hostSecret: room.hostSecret, maxReceivers: MAX_RECEIVERS_PER_ROOM });
 });
 
 // Helper: High-precision master time in milliseconds
@@ -327,6 +336,7 @@ function notifyHostDeviceList(room, force = false) {
     room.hostSocket.send(JSON.stringify({
       type: 'DEVICE_LIST',
       devices: list,
+      maxDevices: MAX_RECEIVERS_PER_ROOM,
       mode: room.mode,
       roomName: room.name,
       roomCode: room.code
@@ -364,11 +374,12 @@ wss.on('connection', (ws, req) => {
       const targetChannel = message.readUInt8(10);
       room.lastActivity = Date.now();
 
-      for (const [id, receiver] of room.receivers.entries()) {
-        if (receiver.ws.readyState === WebSocket.OPEN) {
+      for (const receiver of room.receivers.values()) {
+        const rws = receiver.ws;
+        if (rws.readyState === WebSocket.OPEN) {
           if (targetChannel === 255 || receiver.channelIndex === targetChannel) {
-            if (receiver.ws.bufferedAmount < 512000) {
-              receiver.ws.send(message, { binary: true });
+            if (rws.bufferedAmount < MAX_RECEIVER_BUFFER_BYTES) {
+              rws.send(message, { binary: true, compress: false });
             }
           }
         }
@@ -443,7 +454,8 @@ wss.on('connection', (ws, req) => {
             type: 'HOST_REGISTERED',
             roomCode: room.code,
             roomName: room.name,
-            mode: room.mode
+            mode: room.mode,
+            maxDevices: MAX_RECEIVERS_PER_ROOM
           }));
           broadcastHostStatus(room, true);
           notifyHostDeviceList(room, true);
@@ -481,7 +493,7 @@ wss.on('connection', (ws, req) => {
           if (!room.receivers.has(deviceId) && room.receivers.size >= MAX_RECEIVERS_PER_ROOM) {
             ws.send(JSON.stringify({
               type: 'ROOM_FULL',
-              reason: `This room is full (${MAX_RECEIVERS_PER_ROOM} speakers max).`
+              reason: `This room is full (${MAX_RECEIVERS_PER_ROOM} speakers max for low-latency audio).`
             }));
             return;
           }
@@ -677,7 +689,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(` > Server Listening on Port:  ${PORT} (${scheme.toUpperCase()})`);
   console.log(` > Local Host Dashboard:      ${scheme}://localhost:${PORT}`);
   console.log(` > Local LAN Wi-Fi Endpoint:  ${scheme}://${localIp}:${PORT}`);
+  console.log(` > Max Speakers Per Room:     ${MAX_RECEIVERS_PER_ROOM} (5.1 Array Optimized)`);
   console.log(' > Multi-Tenant Rooms:       Enabled (Dynamic)');
-  console.log(' > Cloud Reverse Proxy:      Enabled');
   console.log('======================================================\n');
 });

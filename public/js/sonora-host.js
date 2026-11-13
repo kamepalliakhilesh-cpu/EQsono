@@ -158,7 +158,6 @@
     }
   }
 
-  // Initialize
   async function init() {
     if (httpsNoticeBanner && !window.isSecureContext) {
       httpsNoticeBanner.hidden = false;
@@ -180,7 +179,6 @@
     setupWebSocket();
   }
 
-  // View Navigation
   function setupNavigation() {
     function switchTab(viewId, activeBtn) {
       [viewOverview, viewSpeakers, viewSettings].forEach(v => {
@@ -250,7 +248,6 @@
       settingRoomName.value = roomName;
       topbarRoomName.textContent = roomName;
 
-      // Propagate the new name to every connected phone.
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'SET_ROOM_NAME', roomName }));
       }
@@ -268,7 +265,6 @@
       localStorage.setItem('sonora_buffer_delay', ms);
     });
 
-    // Profile presets (Wi-Fi, Public Internet WAN, High Jitter)
     document.querySelectorAll('.profile-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const d = parseInt(btn.dataset.delay);
@@ -279,10 +275,9 @@
       });
     });
 
-    // Restore saved buffer delay (both UI and stage readout)
     const savedDelay = localStorage.getItem('sonora_buffer_delay');
     if (savedDelay && hostDelaySlider) {
-      const parsedDelay = Math.max(60, Math.min(600, parseInt(savedDelay, 10) || 150));
+      const parsedDelay = Math.max(60, Math.min(600, parseInt(savedDelay, 10) || 180));
       hostDelaySlider.value = String(parsedDelay);
       hostDelayValue.textContent = `${parsedDelay}ms`;
       const stageCoord = document.querySelector('.stage-coordinate');
@@ -297,7 +292,6 @@
     }
   }
 
-  // WebSocket Connection
   function setupWebSocket() {
     if (hostReplaced) return;
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -354,7 +348,6 @@
             }
           }
         } else if (msg.type === 'HOST_REJECTED') {
-          // Room expired or secret invalid (e.g. server restarted): create fresh room
           localStorage.removeItem('sonora_host_room');
           localStorage.removeItem('sonora_host_secret');
           roomCode = '';
@@ -385,7 +378,6 @@
             if (!validIds.has(id)) delete deviceDelays[id];
           });
 
-          // Preserve the user's manual role and per-speaker delay choices.
           connectedDevices = msg.devices.map(dev => {
             if (deviceDelays[dev.id] === undefined && Number.isFinite(dev.delayMs)) {
               deviceDelays[dev.id] = dev.delayMs;
@@ -417,6 +409,9 @@
             if (popoverRoomCode) popoverRoomCode.textContent = roomCode;
           }
 
+          if (audioEngine) {
+            audioEngine.setConnectedDeviceCount(connectedDevices.length);
+          }
           updateDeviceCounts(connectedDevices.length);
           applyAdaptiveSurroundRoles();
           renderSpeakersUI();
@@ -483,29 +478,24 @@
     };
   }
 
-  // Mode Switching (Stereo vs Surround)
   function setupModeToggle() {
     function setMode(mode, notifyServer = true) {
       currentMode = mode;
       const isStereo = mode === 'STEREO';
 
-      // Update toggles
       btnModeStereo.classList.toggle('selected', isStereo);
       btnModeSurround.classList.toggle('selected', !isStereo);
       btnModeStereo2.classList.toggle('selected', isStereo);
       btnModeSurround2.classList.toggle('selected', !isStereo);
 
-      // Update stat cards
       statModeTitle.textContent = isStereo ? 'Stereo' : 'Surround';
       statModeChip.textContent = isStereo ? 'All speakers' : '5.1 matrix';
 
-      // Update stage footer
       stageModeDesc.textContent = isStereo
         ? 'All speakers play identical stereo channel'
         : 'Spatial channels routed to calibrated speaker positions';
       stageMixTag.textContent = isStereo ? 'Stereo' : '5.1 matrix';
 
-      // Update engine & broadcast
       if (audioEngine) audioEngine.setMode(isStereo ? 'PARTY' : 'DOLBY');
       if (notifyServer && ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
@@ -525,7 +515,6 @@
     btnModeSurround2.addEventListener('click', () => setMode('SURROUND', true));
   }
 
-  // Audio Source Selection & Ingestion
   function setupAudioSources() {
     function updateDemoTitles() {
       const titles = {
@@ -684,7 +673,6 @@
       }
     });
 
-    // Drag-and-drop audio file ingestion
     window.addEventListener('dragover', (e) => {
       const hasFiles = e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
       if (!hasFiles) return;
@@ -723,7 +711,6 @@
     });
   }
 
-  // Bottom Transport Player Controls
   function setupTransport() {
     btnTransportPlay.addEventListener('click', async () => {
       if (audioEngine.isRunning) {
@@ -794,7 +781,6 @@
     }
   }
 
-  // Modals & Sound Test Suite (Native <dialog> with closedby="any" fallback)
   function setupModals() {
     const openDialog = (dlg) => {
       if (!dlg) return;
@@ -814,7 +800,6 @@
       }
     };
 
-    // Fallback light-dismiss for browsers lacking <dialog closedby="any"> (e.g. Safari)
     if (!('closedBy' in HTMLDialogElement.prototype)) {
       const outside = (e, dialog) => {
         const r = dialog.getBoundingClientRect();
@@ -836,31 +821,26 @@
     btnConnectPhoneManage.addEventListener('click', openAddModal);
     btnCloseAddModal.addEventListener('click', () => closeDialog(addSpeakerModal));
 
-    // Sound Test Modal
     btnTestSound.addEventListener('click', () => openDialog(testSoundModal));
     btnCloseTestModal.addEventListener('click', () => closeDialog(testSoundModal));
 
-    // Channel test buttons
     document.querySelectorAll('.ch-test-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         const chId = parseInt(btn.dataset.channel, 10);
         const chName = btn.dataset.name;
         if (audioEngine) audioEngine.playChannelTest(chId, chName);
 
-        // Ping matching speakers visually/haptically (in Stereo mode all speakers share ch 255)
         connectedDevices
           .filter(d => currentMode === 'STEREO' || d.channelIndex === chId)
           .forEach(d => pingSpeaker(d.id, true));
       });
     });
 
-    // Connection guide
     const openGuide = () => openDialog(guideModal);
     btnOpenGuide.addEventListener('click', openGuide);
     btnOpenGoodToKnow.addEventListener('click', openGuide);
     btnCloseGuideModal.addEventListener('click', () => closeDialog(guideModal));
 
-    // Copy invite link (prefer the LAN URL from the server, with legacy fallback)
     const copyLink = async () => {
       let url = receiverUrl;
       if (!url) {
@@ -950,7 +930,6 @@
         topbarRoomName.textContent = roomName;
       }
 
-      // Render Network Interface switcher if multiple IPs exist (e.g. Wi-Fi and Mobile Hotspot)
       const networkBox = document.getElementById('modalNetworkSelect');
       const networkChips = document.getElementById('networkChips');
       if (networkBox && networkChips) {
@@ -978,17 +957,12 @@
     }
   }
 
-  // Update counts
   function updateDeviceCounts(count) {
     sidebarSpeakerCount.textContent = count;
     statSpeakerCount.textContent = count;
     connectedHeadingCount.textContent = count;
   }
 
-  /**
-   * Adaptive Placement Engine:
-   * Maps connected speakers to optimal acoustic slots around the room
-   */
   function applyAdaptiveSurroundRoles() {
     const count = connectedDevices.length;
 
@@ -1037,8 +1011,8 @@
       }
     });
 
-    // Notify host audio engine of active destination channels to save bandwidth and CPU
     if (audioEngine) {
+      audioEngine.setConnectedDeviceCount(count);
       if (currentMode === 'STEREO') {
         audioEngine.setActiveChannels([255]);
       } else {
@@ -1052,9 +1026,6 @@
     updateStageSlots();
   }
 
-  /**
-   * Updates the 6 spatial Soundstage slots on the room arena by speaker role
-   */
   function updateStageSlots() {
     const slots = [
       { role: 'FRONT_LEFT',  code: 'FL',  defaultLabel: 'Front Left',   nodeId: 'slotNodeFL',  labelId: 'slotLabelFL' },
@@ -1140,9 +1111,6 @@
     return wrap;
   }
 
-  /**
-   * Render Connected Speakers in bottom section & Speakers tab
-   */
   function renderSpeakersUI() {
     const hasDevices = connectedDevices.length > 0;
 
@@ -1159,9 +1127,6 @@
       return;
     }
 
-    // Rebuild only when mode/membership/roles/names change. Telemetry-only updates
-    // (RTT/offset) are patched into the existing nodes so the delay sliders
-    // and role dropdowns are never reset while the user is editing them.
     const signature = `${currentMode}::` + connectedDevices
       .map(d => `${d.id}|${d.role}|${d.name}`)
       .join('~');
@@ -1191,7 +1156,6 @@
       const roleText = dev.role.replace(/_/g, ' ');
       const savedDelay = deviceDelays[dev.id] || 0;
 
-      // Overview row (DOM nodes only, no innerHTML with device data)
       const row1 = document.createElement('div');
       row1.className = 'speaker-row';
 
@@ -1229,7 +1193,6 @@
       overviewRowNodes.set(dev.id, rttText);
       overviewSpeakersList.appendChild(row1);
 
-      // Manage speakers detailed row
       const row2 = document.createElement('div');
       row2.className = 'speaker-row detailed';
 
@@ -1343,7 +1306,6 @@
     }
   }
 
-  // Real-time animated Waveform Bars, Dual Stereo VU Meters, File Progress, and Arena Pulses
   function startWaveformAnimation() {
     const bars = waveformContainer.querySelectorAll('i');
 
@@ -1371,10 +1333,8 @@
           bar.style.height = `${height}px`;
         });
 
-        // Query real-time stereo levels from DSP engine
         const levels = audioEngine.getAudioLevels ? audioEngine.getAudioLevels() : null;
         if (levels) {
-          // VU Meter Ballistics
           const pctL = Math.min(100, levels.leftPeak * 115);
           const pctR = Math.min(100, levels.rightPeak * 115);
 
@@ -1387,7 +1347,6 @@
           if (vuPeakL) vuPeakL.style.left = `${Math.min(98, peakHoldL)}%`;
           if (vuPeakR) vuPeakR.style.left = `${Math.min(98, peakHoldR)}%`;
 
-          // Stage Arena Speaker Pulse Animation
           const energy = levels.energy;
           stageNodes.forEach(node => {
             if (node.parentElement && node.parentElement.classList.contains('has-device')) {

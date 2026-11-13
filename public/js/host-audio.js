@@ -2,7 +2,7 @@
  * Host Audio Processing & Streaming Engine
  * Manages Web Audio context, zero-allocation DSP spatial matrix, system audio capture,
  * media file playback, synthetic 5.1 test tones, continuous sample-accurate timestamping,
- * and high-efficiency binary packet streaming.
+ * and single-MTU binary packet streaming.
  */
 class HostAudioEngine {
   constructor(ws, ntpSync) {
@@ -10,9 +10,10 @@ class HostAudioEngine {
     this.ntpSync = ntpSync;
     this.audioCtx = null;
     this.sourceNode = null;
-    this.activeSourceType = 'none'; // 'system' | 'file' | 'synth'
+    this.activeSourceType = 'none'; // 'system' | 'file' | 'demo'
     this.currentMode = 'PARTY'; // 'PARTY' (Stereo) | 'DOLBY' (Surround)
     this.activeChannels = new Set([255]); // Active destination channels
+    this.connectedDeviceCount = 0;
 
     // DSP Nodes
     this.analyser = null;
@@ -27,10 +28,11 @@ class HostAudioEngine {
     this.workletNode = null;
     this.workletLoaded = false;
     this.isRunning = false;
-    this.sampleRate = 44100;
+    this.sampleRate = 48000;
     this.outputLatency = 0;
     this.streamAnchorLocalTime = null;
     this.streamAnchorAudioTime = null;
+    this.streamAnchorNtpOffset = 0;
     this.totalSamplesProcessed = 0;
 
     // Stream references & callbacks
@@ -41,15 +43,19 @@ class HostAudioEngine {
     this.fileLoop = true;
     this.onStreamEnded = null;
 
-    // Master sync buffer delay (150ms default for rock-solid Wi-Fi jitter absorption)
-    this.broadcastDelayMs = 150;
+    // Master sync buffer delay (180ms default to cleanly absorb 102.4ms Wi-Fi DTIM beacon intervals)
+    this.broadcastDelayMs = 180;
     this.initialLaptopVolume = 0.75;
 
-    // Audio payload codec: Linear PCM by default for lossless, pristine studio sound
-    this.codec = 'pcm';
+    // Audio payload codec: 'auto' (Smart Adaptive), 'pcm' (Lossless 16-bit), or 'adpcm' (4:1 Stateful IMA-ADPCM)
+    this.codec = 'auto';
 
-    // 2nd-Order Linkwitz-Riley Subwoofer Lowpass (120Hz cutoff)
-    this._subFilter = {
+    // Subwoofer Bandpass Filter: 65Hz High-Pass (protects mobile micro-speakers) + 180Hz Low-Pass (upper-bass punch)
+    this._subLowpass = {
+      b0: 0, b1: 0, b2: 0, a1: 0, a2: 0,
+      x1: 0, x2: 0, y1: 0, y2: 0
+    };
+    this._subHighpass = {
       b0: 0, b1: 0, b2: 0, a1: 0, a2: 0,
       x1: 0, x2: 0, y1: 0, y2: 0
     };
@@ -75,7 +81,7 @@ class HostAudioEngine {
     this.demoTimer = null;
     this.demoAudioNodes = [];
 
-    // Pre-allocated static PCM buffers (2048 samples) - Zero GC allocation during streaming
+    // Pre-allocated static PCM buffers (2048 samples max) - Zero GC allocation during streaming
     const maxBufferSize = 2048;
     this.pcmBuffers = {
       255: new Int16Array(maxBufferSize), // Party / Stereo downmix
@@ -105,7 +111,6 @@ class HostAudioEngine {
       this.packetBytes[chId] = new Uint8Array(buffer);
     });
 
-    // Visualizer data callback
     this.onVisualizerData = null;
   }
 
@@ -132,9 +137,6 @@ class HostAudioEngine {
     }
 
     if (!this.laptopDelayNode) {
-      // Build Laptop Speaker Delay (To match phone playback perfectly).
-      // Subtract the laptop's own DAC/output latency so the sound leaving the
-      // speakers lands on the same master-clock instant as the phones.
       this.laptopDelayNode = this.audioCtx.createDelay(1.0);
       this.laptopDelayNode.delayTime.value = Math.max(
         0,
@@ -165,7 +167,16 @@ class HostAudioEngine {
   }
 
   setMode(mode) {
-    this.currentMode = mode;
+    if (this.currentMode !== mode) {
+      this.currentMode = mode;
+      if (typeof AudioCodec !== 'undefined' && AudioCodec.resetState) {
+        AudioCodec.resetState();
+      }
+    }
+  }
+
+  setConnectedDeviceCount(count) {
+    this.connectedDeviceCount = Math.max(0, Number(count) || 0);
   }
 
   setActiveChannels(channels) {
@@ -198,8 +209,21 @@ class HostAudioEngine {
   }
 
   setCodec(mode) {
-    if (mode !== 'adpcm' && mode !== 'pcm') return;
-    this.codec = (mode === 'adpcm' && typeof AudioCodec === 'undefined') ? 'pcm' : mode;
+    if (mode !== 'auto' && mode !== 'adpcm' && mode !== 'pcm') return;
+    this.codec = (mode !== 'pcm' && typeof AudioCodec === 'undefined') ? 'pcm' : mode;
+    if (typeof AudioCodec !== 'undefined' && AudioCodec.resetState) {
+      AudioCodec.resetState();
+    }
+  }
+
+  _shouldUseAdpcm() {
+    if (typeof AudioCodec === 'undefined') return false;
+    if (this.codec === 'adpcm') return true;
+    if (this.codec === 'pcm') return false;
+    // 'auto' mode: use lossless single-MTU PCM for 1-2 stereo speakers;
+    // switch to stateful 4:1 ADPCM when 3+ devices or Surround 5.1 channels are active
+    const activeChCount = this.activeChannels ? this.activeChannels.size : 1;
+    return this.currentMode === 'DOLBY' || activeChCount > 1 || this.connectedDeviceCount >= 3;
   }
 
   /**
@@ -315,7 +339,11 @@ class HostAudioEngine {
   resetStreamAnchor() {
     this.streamAnchorLocalTime = null;
     this.streamAnchorAudioTime = null;
+    this.streamAnchorNtpOffset = this.ntpSync ? this.ntpSync.offset : 0;
     this.totalSamplesProcessed = 0;
+    if (typeof AudioCodec !== 'undefined' && AudioCodec.resetState) {
+      AudioCodec.resetState();
+    }
   }
 
   setFileLoop(loop) {
@@ -345,16 +373,15 @@ class HostAudioEngine {
     this.sourceNode.connect(this.masterGain);
 
     // Reset DSP filter states cleanly when starting a new source
-    this._subFilter.x1 = 0;
-    this._subFilter.x2 = 0;
-    this._subFilter.y1 = 0;
-    this._subFilter.y2 = 0;
+    this._subLowpass.x1 = 0; this._subLowpass.x2 = 0;
+    this._subLowpass.y1 = 0; this._subLowpass.y2 = 0;
+    this._subHighpass.x1 = 0; this._subHighpass.x2 = 0;
+    this._subHighpass.y1 = 0; this._subHighpass.y2 = 0;
     this._surroundDelayBuf.fill(0);
     this._surroundDelayIdx = 0;
     this._surroundAllpassState.x1 = 0;
     this._surroundAllpassState.y1 = 0;
 
-    // Route processor output to muted dummy gain to keep processing alive without un-delayed bleed
     if (!this.processorMuteGain) {
       this.processorMuteGain = this.audioCtx.createGain();
       this.processorMuteGain.gain.value = 0;
@@ -383,44 +410,61 @@ class HostAudioEngine {
       this.processor.onaudioprocess = (e) => this.handleAudioProcess(e);
     }
 
-    // Reset clock anchor
     this.resetStreamAnchor();
     this.sequence = 0;
     this.isRunning = true;
   }
 
   _setupSubFilter(sampleRate) {
-    // 2nd-order Linkwitz-Riley low-pass filter (fc = 120Hz, critical Q = 0.5)
-    const fc = 120;
-    const omega = 2 * Math.PI * fc / sampleRate;
-    const sinOmega = Math.sin(omega);
-    const cosOmega = Math.cos(omega);
-    const alpha = sinOmega / (2 * 0.7071); // Butterworth Q=0.7071
-    const b0 = (1 - cosOmega) / 2;
-    const b1 = 1 - cosOmega;
-    const b2 = (1 - cosOmega) / 2;
-    const a0 = 1 + alpha;
-    const a1 = -2 * cosOmega;
-    const a2 = 1 - alpha;
-    this._subFilter = {
-      b0: b0 / a0,
-      b1: b1 / a0,
-      b2: b2 / a0,
-      a1: a1 / a0,
-      a2: a2 / a0,
-      x1: 0, x2: 0, y1: 0, y2: 0
-    };
+    // 1. 65Hz High-Pass Butterworth Filter (blocks DC & sub-65Hz cone-rattling excursion on mobile phones)
+    {
+      const fc = 65;
+      const omega = 2 * Math.PI * fc / sampleRate;
+      const sinO = Math.sin(omega);
+      const cosO = Math.cos(omega);
+      const alpha = sinO / (2 * 0.7071);
+      const b0 = (1 + cosO) / 2;
+      const b1 = -(1 + cosO);
+      const b2 = (1 + cosO) / 2;
+      const a0 = 1 + alpha;
+      const a1 = -2 * cosO;
+      const a2 = 1 - alpha;
+      this._subHighpass = {
+        b0: b0 / a0, b1: b1 / a0, b2: b2 / a0,
+        a1: a1 / a0, a2: a2 / a0,
+        x1: 0, x2: 0, y1: 0, y2: 0
+      };
+    }
+    // 2. 180Hz Low-Pass Butterworth Filter (retains audible 65-180Hz upper-bass punch for mobile drivers)
+    {
+      const fc = 180;
+      const omega = 2 * Math.PI * fc / sampleRate;
+      const sinO = Math.sin(omega);
+      const cosO = Math.cos(omega);
+      const alpha = sinO / (2 * 0.7071);
+      const b0 = (1 - cosO) / 2;
+      const b1 = 1 - cosO;
+      const b2 = (1 - cosO) / 2;
+      const a0 = 1 + alpha;
+      const a1 = -2 * cosO;
+      const a2 = 1 - alpha;
+      this._subLowpass = {
+        b0: b0 / a0, b1: b1 / a0, b2: b2 / a0,
+        a1: a1 / a0, a2: a2 / a0,
+        x1: 0, x2: 0, y1: 0, y2: 0
+      };
+    }
   }
 
   /**
-   * Analog soft-knee saturation curve.
-   * Completely linear up to 0.7; hyperbolic tangent saturation above 0.7
-   * to eliminate harsh digital clipping while maintaining warm analog punch.
+   * Transparent studio peak limiter.
+   * 100% linear up to 0.92 (-0.7 dBFS) so music transients stay crystal clear,
+   * with smooth hyperbolic tangent limiting above 0.92 to prevent Int16 clipping.
    */
   _softLimit(x) {
-    if (x > -0.7 && x < 0.7) return x;
-    if (x >= 0.7) return 0.7 + 0.3 * Math.tanh((x - 0.7) / 0.3);
-    return -0.7 + 0.3 * Math.tanh((x + 0.7) / 0.3);
+    if (x > -0.92 && x < 0.92) return x;
+    if (x >= 0.92) return 0.92 + 0.08 * Math.tanh((x - 0.92) / 0.08);
+    return -0.92 + 0.08 * Math.tanh((x + 0.92) / 0.08);
   }
 
   getAudioLevels() {
@@ -428,15 +472,12 @@ class HostAudioEngine {
   }
 
   /**
-   * Audio frame processor: Slices stereo / multi-channel samples,
-   * performs Dolby matrix DSP, and broadcasts sample-accurate packets.
-   * performs Dolby matrix DSP, Linkwitz-Riley crossover, 90-degree surround phase-shift,
-   * analog soft saturation, and broadcasts sample-accurate packets.
+   * Fallback ScriptProcessor handler: splits 1024-sample buffer into two 512-sample
+   * sub-frames so every PCM packet (1,040 bytes) fits inside a single 1,460-byte TCP MSS frame.
    */
   handleAudioProcess(event) {
     if (!this.isRunning || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
-    // Clear output buffer to guarantee no un-delayed audio bleeds through processor
     if (event.outputBuffer) {
       for (let ch = 0; ch < event.outputBuffer.numberOfChannels; ch++) {
         event.outputBuffer.getChannelData(ch).fill(0);
@@ -446,14 +487,25 @@ class HostAudioEngine {
     const inputBuffer = event.inputBuffer;
     const leftChannel = inputBuffer.getChannelData(0);
     const rightChannel = inputBuffer.numberOfChannels > 1 ? inputBuffer.getChannelData(1) : leftChannel;
-    const chunkStartAudioTime = this.audioCtx.currentTime - (inputBuffer.length / this.sampleRate);
+    const totalLen = inputBuffer.length;
+    const chunkStartAudioTime = this.audioCtx.currentTime - (totalLen / this.sampleRate);
 
-    this.handlePcmFrame(leftChannel, rightChannel, chunkStartAudioTime);
+    if (totalLen > 640) {
+      const half = totalLen >> 1;
+      this.handlePcmFrame(leftChannel.subarray(0, half), rightChannel.subarray(0, half), chunkStartAudioTime);
+      this.handlePcmFrame(
+        leftChannel.subarray(half, totalLen),
+        rightChannel.subarray(half, totalLen),
+        chunkStartAudioTime + (half / this.sampleRate)
+      );
+    } else {
+      this.handlePcmFrame(leftChannel, rightChannel, chunkStartAudioTime);
+    }
   }
 
   /**
-   * Processes one 1024-sample (or fallback) stereo PCM frame, applies DSP matrix,
-   * and transmits sample-accurate packets to active speakers.
+   * Processes one stereo PCM frame (640 samples from Worklet or 512 from fallback),
+   * applies DSP matrix, and transmits sample-accurate single-MTU packets.
    */
   handlePcmFrame(leftChannel, rightChannel, chunkStartAudioTime) {
     if (!this.isRunning || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
@@ -462,31 +514,39 @@ class HostAudioEngine {
     const localNow = this.ntpSync ? this.ntpSync.getLocalTime() : Date.now();
     const ageMs = Math.max(0, (this.audioCtx.currentTime - chunkStartAudioTime) * 1000);
 
-    // Initialize or re-anchor continuous sample-clock timeline using exact capture start instant
     if (this.streamAnchorLocalTime === null || this.streamAnchorAudioTime === null) {
       this.streamAnchorLocalTime = localNow - ageMs;
       this.streamAnchorAudioTime = chunkStartAudioTime;
+      this.streamAnchorNtpOffset = this.ntpSync ? this.ntpSync.offset : 0;
       this.totalSamplesProcessed = 0;
     }
 
-    // Drift / Pause detector: if audio context jumped (e.g. seek or background tab freeze >150ms), re-anchor smoothly
+    // Drift / Pause detector: if audio context jumped (e.g. seek or tab freeze >150ms), re-anchor cleanly
     const expectedAudioTime = this.streamAnchorAudioTime + (this.totalSamplesProcessed / this.sampleRate);
     if (Math.abs(chunkStartAudioTime - expectedAudioTime) > 0.150) {
       this.streamAnchorLocalTime = localNow - ageMs;
       this.streamAnchorAudioTime = chunkStartAudioTime;
+      this.streamAnchorNtpOffset = this.ntpSync ? this.ntpSync.offset : 0;
       this.totalSamplesProcessed = 0;
+      if (typeof AudioCodec !== 'undefined' && AudioCodec.resetState) {
+        AudioCodec.resetState();
+      }
     }
 
-    // Sample-accurate target play time for sample 0 of this buffer across all devices.
-    // Adding live ntpSync.offset ensures post-start NTP lock refinements apply cleanly.
-    const ntpOffset = this.ntpSync ? this.ntpSync.offset : 0;
-    const bufferMasterTime = this.streamAnchorLocalTime + ((this.totalSamplesProcessed / this.sampleRate) * 1000) + ntpOffset;
+    // Gently slew anchored NTP offset (max ±0.02ms per frame) so live NTP updates never cause timestamp jitter
+    if (this.ntpSync) {
+      const offsetDiff = this.ntpSync.offset - this.streamAnchorNtpOffset;
+      this.streamAnchorNtpOffset += Math.max(-0.02, Math.min(0.02, offsetDiff * 0.01));
+    }
+
+    const bufferMasterTime = this.streamAnchorLocalTime +
+      ((this.totalSamplesProcessed / this.sampleRate) * 1000) +
+      this.streamAnchorNtpOffset;
     const targetPlayTime = bufferMasterTime + this.broadcastDelayMs;
     this.totalSamplesProcessed += numSamples;
 
     this.sequence = (this.sequence + 1) & 0xffff;
 
-    // Track real-time audio statistics for VU meters & UI visualizers
     let lSumSq = 0;
     let rSumSq = 0;
     let lPeak = 0;
@@ -495,7 +555,6 @@ class HostAudioEngine {
     const isParty = this.currentMode === 'PARTY';
 
     if (isParty) {
-      // PARTY / STEREO MODE: Broadcast single downmixed stereo stream (Channel 255)
       const partyBuf = this.pcmBuffers[255];
       for (let i = 0; i < numSamples; i++) {
         const l = leftChannel[i];
@@ -508,14 +567,12 @@ class HostAudioEngine {
         rSumSq += r * r;
 
         const mono = (l + r) * 0.5;
-        const saturated = this._softLimit(mono);
-        partyBuf[i] = Math.max(-32768, Math.min(32767, saturated * 32767));
+        const limited = this._softLimit(mono);
+        partyBuf[i] = Math.max(-32768, Math.min(32767, (limited * 32767) | 0));
       }
       this.sendPcmPacket(targetPlayTime, this.sequence, 255, partyBuf, numSamples);
       this.audioLevels.channelEnergy[255] = Math.min(1.0, Math.sqrt((lSumSq + rSumSq) / (numSamples * 2)) * 1.4);
     } else {
-      // DOLBY SURROUND MODE:
-      // Only compute and stream active channels to conserve bandwidth & mobile CPU
       const active = this.activeChannels;
       const needFL = !active || active.has(1);
       const needFR = !active || active.has(2);
@@ -531,9 +588,10 @@ class HostAudioEngine {
       const slBuf = this.pcmBuffers[5];
       const srBuf = this.pcmBuffers[6];
 
-      const sf = this._subFilter;
+      const hp = this._subHighpass;
+      const lp = this._subLowpass;
       const ap = this._surroundAllpassState;
-      const centerSubtract = needC ? 0.45 : 0;
+      const centerSubtract = needC ? 0.35 : 0;
 
       for (let i = 0; i < numSamples; i++) {
         const l = leftChannel[i];
@@ -545,42 +603,42 @@ class HostAudioEngine {
         lSumSq += l * l;
         rSumSq += r * r;
 
-        // Front & Center extraction (only extract center from FL/FR when a Center speaker is active)
         if (needC || needFL || needFR) {
-          const center = (l + r) * 0.65;
-          if (needC)  cBuf[i]  = Math.max(-32768, Math.min(32767, this._softLimit(center) * 32767));
-          if (needFL) flBuf[i] = Math.max(-32768, Math.min(32767, this._softLimit((l - center * centerSubtract) * (needC ? 1.15 : 1.0)) * 32767));
-          if (needFR) frBuf[i] = Math.max(-32768, Math.min(32767, this._softLimit((r - center * centerSubtract) * (needC ? 1.15 : 1.0)) * 32767));
+          const center = (l + r) * 0.55;
+          if (needC)  cBuf[i]  = Math.max(-32768, Math.min(32767, (this._softLimit(center) * 32767) | 0));
+          if (needFL) flBuf[i] = Math.max(-32768, Math.min(32767, (this._softLimit(l - center * centerSubtract) * 32767) | 0));
+          if (needFR) frBuf[i] = Math.max(-32768, Math.min(32767, (this._softLimit(r - center * centerSubtract) * 32767) | 0));
         }
 
-        // 90-degree phase-shifted & 15ms decorrelated surround ambience (with subtle mono ambience blend)
         if (needSL || needSR) {
-          const diff = ((l - r) * 0.707) + ((l + r) * 0.12);
-          // Allpass 90-degree phase shift network: y[n] = c * x[n] + x[n-1] - c * y[n-1]
+          const diff = ((l - r) * 0.65) + ((l + r) * 0.15);
           const phaseShifted = ap.c * diff + ap.x1 - ap.c * ap.y1;
           ap.x1 = diff;
           ap.y1 = phaseShifted;
 
-          // 15ms circular delay buffer for true Haas acoustic decorrelation
           const delayOut = this._surroundDelayBuf[this._surroundDelayIdx];
           this._surroundDelayBuf[this._surroundDelayIdx] = phaseShifted;
           this._surroundDelayIdx = (this._surroundDelayIdx + 1) % this._surroundDelaySize;
 
-          if (needSL) slBuf[i] = Math.max(-32768, Math.min(32767, this._softLimit(delayOut * 1.1) * 32767));
-          if (needSR) srBuf[i] = Math.max(-32768, Math.min(32767, this._softLimit(-delayOut * 1.1) * 32767));
+          if (needSL) slBuf[i] = Math.max(-32768, Math.min(32767, (this._softLimit(delayOut) * 32767) | 0));
+          if (needSR) srBuf[i] = Math.max(-32768, Math.min(32767, (this._softLimit(-delayOut) * 32767) | 0));
         }
 
-        // Linkwitz-Riley 2nd-Order Low-Pass Subwoofer (120Hz)
         if (needSub) {
           const monoSum = (l + r) * 0.5;
-          const y = sf.b0 * monoSum + sf.b1 * sf.x1 + sf.b2 * sf.x2 - sf.a1 * sf.y1 - sf.a2 * sf.y2;
-          sf.x2 = sf.x1; sf.x1 = monoSum;
-          sf.y2 = sf.y1; sf.y1 = y;
-          subBuf[i] = Math.max(-32768, Math.min(32767, this._softLimit(y * 1.6) * 32767));
+          // 65Hz High-pass stage
+          const hOut = hp.b0 * monoSum + hp.b1 * hp.x1 + hp.b2 * hp.x2 - hp.a1 * hp.y1 - hp.a2 * hp.y2;
+          hp.x2 = hp.x1; hp.x1 = monoSum;
+          hp.y2 = hp.y1; hp.y1 = hOut;
+          // 180Hz Low-pass stage
+          const lOut = lp.b0 * hOut + lp.b1 * lp.x1 + lp.b2 * lp.x2 - lp.a1 * lp.y1 - lp.a2 * lp.y2;
+          lp.x2 = lp.x1; lp.x1 = hOut;
+          lp.y2 = lp.y1; lp.y1 = lOut;
+
+          subBuf[i] = Math.max(-32768, Math.min(32767, (this._softLimit(lOut * 1.2) * 32767) | 0));
         }
       }
 
-      // Broadcast only channels required by currently assigned speakers
       if (needFL)  this.sendPcmPacket(targetPlayTime, this.sequence, 1, flBuf, numSamples);
       if (needFR)  this.sendPcmPacket(targetPlayTime, this.sequence, 2, frBuf, numSamples);
       if (needC)   this.sendPcmPacket(targetPlayTime, this.sequence, 3, cBuf, numSamples);
@@ -589,7 +647,6 @@ class HostAudioEngine {
       if (needSR)  this.sendPcmPacket(targetPlayTime, this.sequence, 6, srBuf, numSamples);
     }
 
-    // Export live levels for dual stereo VU meters & stage arena animations
     const lRms = Math.sqrt(lSumSq / numSamples);
     const rRms = Math.sqrt(rSumSq / numSamples);
     this.audioLevels.leftRms = lRms;
@@ -619,14 +676,10 @@ class HostAudioEngine {
     let flags = 0;
     let payloadBytes;
 
-    // ADPCM needs an even sample count; all real callers pass 2048-sample frames.
-    const useAdpcm = this.codec === 'adpcm' &&
-      typeof AudioCodec !== 'undefined' &&
-      numSamples > 0 &&
-      (numSamples & 1) === 0;
+    const useAdpcm = this._shouldUseAdpcm() && numSamples > 0 && (numSamples & 1) === 0;
 
     if (useAdpcm) {
-      payloadBytes = AudioCodec.encodeImaAdpcm(int16Samples, packetBytes, headerSize, numSamples);
+      payloadBytes = AudioCodec.encodeImaAdpcm(int16Samples, packetBytes, headerSize, numSamples, channelId);
       flags |= 0x01;
     } else {
       payloadBytes = numSamples * 2;
@@ -638,11 +691,9 @@ class HostAudioEngine {
     packetView.setUint16(8, seq, true);
     packetView.setUint8(10, channelId);
     packetView.setUint8(11, flags);
-    // Send the real sample rate so receivers never assume 44.1/48 kHz.
     packetView.setUint32(12, this.sampleRate, true);
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      // Send the slice of the pre-allocated buffer
       this.ws.send(packetBuffer.slice(0, headerSize + payloadBytes));
     }
   }
@@ -664,9 +715,9 @@ class HostAudioEngine {
     const osc = this.audioCtx.createOscillator();
     const oscGain = this.audioCtx.createGain();
 
-    if (channelId === 4) { // Subwoofer
+    if (channelId === 4) {
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(60, this.audioCtx.currentTime);
+      osc.frequency.setValueAtTime(95, this.audioCtx.currentTime);
     } else {
       osc.type = 'triangle';
       osc.frequency.setValueAtTime(440, this.audioCtx.currentTime);
@@ -682,23 +733,21 @@ class HostAudioEngine {
     osc.start();
     osc.stop(this.audioCtx.currentTime + 0.6);
 
-    // Stream the same callout to the phone assigned to this channel.
     this.streamChannelTestTone(channelId);
   }
 
-  /**
-   * Synthesizes a short enveloped tone and streams it as normal PCM packets
-   * targeted at one channel, so the assigned receiver actually plays it.
-   */
   streamChannelTestTone(channelId) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
-    // In party mode every phone listens on the broadcast channel.
     const wireChannel = this.currentMode === 'PARTY' ? 255 : channelId;
     if (!this.packetBuffers[wireChannel]) return;
 
+    if (typeof AudioCodec !== 'undefined' && AudioCodec.resetState) {
+      AudioCodec.resetState(wireChannel);
+    }
+
     const duration = 0.6;
-    const freq = channelId === 4 ? 60 : 660;
+    const freq = channelId === 4 ? 95 : 660;
     const totalSamples = Math.floor(this.sampleRate * duration) & ~1;
     const buf = this.testBuffer;
     const baseMaster = this.ntpSync ? this.ntpSync.now() : Date.now();
@@ -706,14 +755,14 @@ class HostAudioEngine {
     let seq = (this.sequence + 1) & 0xffff;
 
     while (sent < totalSamples) {
-      const count = Math.min(1024, totalSamples - sent);
+      const count = Math.min(640, totalSamples - sent);
       for (let i = 0; i < count; i++) {
         const t = (sent + i) / this.sampleRate;
         const fadeIn = Math.min(1, t / 0.02);
         const fadeOut = Math.min(1, (duration - t) / 0.05);
         const env = Math.max(0, Math.min(fadeIn, fadeOut));
         const sample = Math.sin(2 * Math.PI * freq * t) * 0.5 * env;
-        buf[i] = Math.max(-32768, Math.min(32767, sample * 32767));
+        buf[i] = Math.max(-32768, Math.min(32767, (sample * 32767) | 0));
       }
 
       const targetPlayTime = baseMaster + this.broadcastDelayMs + ((sent / this.sampleRate) * 1000);
@@ -724,13 +773,6 @@ class HostAudioEngine {
     this.sequence = seq;
   }
 
-  /**
-   * Built-in Studio Demo Player
-   * Synthesizes studio-grade audio natively in Web Audio so users can immediately
-   * test multi-device synchronization, spatial surround, and bass response with zero files.
-   *
-   * @param {'synthwave' | 'spatial-orbit' | 'sync-pulse'} type
-   */
   async startDemoAudio(type = 'synthwave') {
     await this.init();
     this.stopCurrentSource();
@@ -738,7 +780,6 @@ class HostAudioEngine {
     this.demoType = type;
     this.activeSourceType = 'demo';
 
-    // Master node for the synthesizer demo output
     const demoGain = this.audioCtx.createGain();
     demoGain.gain.value = 0.85;
 
@@ -756,24 +797,18 @@ class HostAudioEngine {
     return true;
   }
 
-  /**
-   * 80s Synthwave Groove Generator
-   * 124 BPM driving kick drum, snappy noise snare, resonant rolling bass arpeggio,
-   * and lush stereo polyphonic synth chords.
-   */
   _startSynthwaveLoop(destination) {
     const ctx = this.audioCtx;
     const bpm = 124;
-    const stepTime = (60 / bpm) / 4; // 16th note step (~121ms)
+    const stepTime = (60 / bpm) / 4;
     let currentStep = 0;
     let nextStepTime = ctx.currentTime + 0.05;
 
-    // Bass notes for Am -> F -> C -> G progression (frequencies in Hz)
     const chords = [
-      { bass: 55.0,  chord: [220.0, 261.63, 329.63] }, // Am
-      { bass: 43.65, chord: [174.61, 220.0, 261.63] }, // F
-      { bass: 65.41, chord: [196.0, 261.63, 329.63] }, // C
-      { bass: 49.0,  chord: [196.0, 246.94, 293.66] }  // G
+      { bass: 55.0,  chord: [220.0, 261.63, 329.63] },
+      { bass: 43.65, chord: [174.61, 220.0, 261.63] },
+      { bass: 65.41, chord: [196.0, 261.63, 329.63] },
+      { bass: 49.0,  chord: [196.0, 246.94, 293.66] }
     ];
 
     const scheduleDrumAndSynth = () => {
@@ -785,14 +820,13 @@ class HostAudioEngine {
         const beatStep = step % 16;
         const chordData = chords[bar];
 
-        // 1. Kick Drum on beats 0, 4, 8, 12 (4-on-the-floor)
         if (beatStep % 4 === 0) {
           const osc = ctx.createOscillator();
           const g = ctx.createGain();
           osc.type = 'sine';
           osc.frequency.setValueAtTime(140, nextStepTime);
-          osc.frequency.exponentialRampToValueAtTime(38, nextStepTime + 0.14);
-          g.gain.setValueAtTime(0.9, nextStepTime);
+          osc.frequency.exponentialRampToValueAtTime(48, nextStepTime + 0.14);
+          g.gain.setValueAtTime(0.85, nextStepTime);
           g.gain.exponentialRampToValueAtTime(0.001, nextStepTime + 0.22);
           osc.connect(g);
           g.connect(destination);
@@ -800,9 +834,7 @@ class HostAudioEngine {
           osc.stop(nextStepTime + 0.24);
         }
 
-        // 2. Snappy Snare / Clap on beats 4, 12
         if (beatStep === 4 || beatStep === 12) {
-          // Noise burst
           const noiseBuf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.15), ctx.sampleRate);
           const noiseData = noiseBuf.getChannelData(0);
           for (let i = 0; i < noiseData.length; i++) noiseData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (ctx.sampleRate * 0.04));
@@ -815,7 +847,7 @@ class HostAudioEngine {
           filter.Q.value = 1.2;
 
           const nGain = ctx.createGain();
-          nGain.gain.setValueAtTime(0.45, nextStepTime);
+          nGain.gain.setValueAtTime(0.42, nextStepTime);
           nGain.gain.exponentialRampToValueAtTime(0.001, nextStepTime + 0.16);
 
           noiseSrc.connect(filter);
@@ -823,13 +855,12 @@ class HostAudioEngine {
           nGain.connect(destination);
           noiseSrc.start(nextStepTime);
 
-          // Snare tone body
           const bodyOsc = ctx.createOscillator();
           const bodyGain = ctx.createGain();
           bodyOsc.type = 'triangle';
           bodyOsc.frequency.setValueAtTime(185, nextStepTime);
-          bodyOsc.frequency.exponentialRampToValueAtTime(80, nextStepTime + 0.12);
-          bodyGain.gain.setValueAtTime(0.35, nextStepTime);
+          bodyOsc.frequency.exponentialRampToValueAtTime(85, nextStepTime + 0.12);
+          bodyGain.gain.setValueAtTime(0.32, nextStepTime);
           bodyGain.gain.exponentialRampToValueAtTime(0.001, nextStepTime + 0.14);
           bodyOsc.connect(bodyGain);
           bodyGain.connect(destination);
@@ -837,7 +868,6 @@ class HostAudioEngine {
           bodyOsc.stop(nextStepTime + 0.15);
         }
 
-        // 3. Hi-Hat on offbeat 16ths
         if (beatStep % 2 === 1) {
           const hatBuf = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.04), ctx.sampleRate);
           const hatData = hatBuf.getChannelData(0);
@@ -845,28 +875,26 @@ class HostAudioEngine {
           const hatSrc = ctx.createBufferSource();
           hatSrc.buffer = hatBuf;
           const hatGain = ctx.createGain();
-          hatGain.gain.value = beatStep % 4 === 2 ? 0.22 : 0.12;
+          hatGain.gain.value = beatStep % 4 === 2 ? 0.20 : 0.11;
           hatSrc.connect(hatGain);
           hatGain.connect(destination);
           hatSrc.start(nextStepTime);
         }
 
-        // 4. Rolling 16th-note Sawtooth Bassline
         const bassOsc = ctx.createOscillator();
         const bassGain = ctx.createGain();
         const bassFilter = ctx.createBiquadFilter();
 
         bassOsc.type = 'sawtooth';
-        // Octave bounce pattern
-        const bassFreq = (beatStep % 4 === 0 || beatStep % 4 === 2) ? chordData.bass : chordData.bass * 2;
+        const bassFreq = (beatStep % 4 === 0 || beatStep % 4 === 2) ? chordData.bass * 2 : chordData.bass * 2;
         bassOsc.frequency.setValueAtTime(bassFreq, nextStepTime);
 
         bassFilter.type = 'lowpass';
         bassFilter.frequency.setValueAtTime(900, nextStepTime);
-        bassFilter.frequency.exponentialRampToValueAtTime(150, nextStepTime + stepTime * 0.85);
-        bassFilter.Q.value = 3.5;
+        bassFilter.frequency.exponentialRampToValueAtTime(160, nextStepTime + stepTime * 0.85);
+        bassFilter.Q.value = 3.0;
 
-        bassGain.gain.setValueAtTime(0.4, nextStepTime);
+        bassGain.gain.setValueAtTime(0.36, nextStepTime);
         bassGain.gain.exponentialRampToValueAtTime(0.001, nextStepTime + stepTime * 0.95);
 
         bassOsc.connect(bassFilter);
@@ -876,13 +904,12 @@ class HostAudioEngine {
         bassOsc.start(nextStepTime);
         bassOsc.stop(nextStepTime + stepTime);
 
-        // 5. Synth Chords on bar beat 0
         if (beatStep === 0) {
           chordData.chord.forEach((freq, idx) => {
             const padOsc = ctx.createOscillator();
             const padGain = ctx.createGain();
             padOsc.type = 'sawtooth';
-            padOsc.frequency.value = freq * (idx === 1 ? 1.003 : 0.997); // gentle chorus detune
+            padOsc.frequency.value = freq * (idx === 1 ? 1.003 : 0.997);
 
             const padFilter = ctx.createBiquadFilter();
             padFilter.type = 'lowpass';
@@ -890,7 +917,7 @@ class HostAudioEngine {
             padFilter.frequency.linearRampToValueAtTime(2200, nextStepTime + 0.8);
             padFilter.frequency.linearRampToValueAtTime(600, nextStepTime + stepTime * 15);
 
-            padGain.gain.setValueAtTime(0.12, nextStepTime);
+            padGain.gain.setValueAtTime(0.11, nextStepTime);
             padGain.gain.exponentialRampToValueAtTime(0.001, nextStepTime + stepTime * 15.5);
 
             padOsc.connect(padFilter);
@@ -911,11 +938,6 @@ class HostAudioEngine {
     scheduleDrumAndSynth();
   }
 
-  /**
-   * Spatial 5.1 Orbit Demonstration Loop
-   * Smoothly pans musical chords and announcements across the 5.1 spatial field:
-   * Front Left -> Center -> Front Right -> Surround Right -> Surround Left -> Subwoofer.
-   */
   _startSpatialOrbitLoop(destination) {
     const ctx = this.audioCtx;
     let orbitStep = 0;
@@ -929,7 +951,6 @@ class HostAudioEngine {
       'Subwoofer'
     ];
 
-    // Stereo panner / phase splitter for spatial matrix positioning
     const merger = ctx.createChannelMerger(2);
     merger.connect(destination);
 
@@ -940,14 +961,12 @@ class HostAudioEngine {
       const chName = channelNames[chIdx];
       const now = ctx.currentTime;
 
-      // Voice announcement of the active channel
       if ('speechSynthesis' in window && !window.speechSynthesis.speaking) {
         const u = new SpeechSynthesisUtterance(chName);
         u.rate = 1.1;
         window.speechSynthesis.speak(u);
       }
 
-      // Synthesize channel melody
       const oscL = ctx.createOscillator();
       const oscR = ctx.createOscillator();
       const gL = ctx.createGain();
@@ -957,13 +976,12 @@ class HostAudioEngine {
       oscR.type = 'triangle';
 
       if (chIdx === 5) {
-        // Subwoofer deep sine sweep
         oscL.type = 'sine';
         oscR.type = 'sine';
-        oscL.frequency.setValueAtTime(80, now);
-        oscL.frequency.exponentialRampToValueAtTime(35, now + 1.6);
-        oscR.frequency.setValueAtTime(80, now);
-        oscR.frequency.exponentialRampToValueAtTime(35, now + 1.6);
+        oscL.frequency.setValueAtTime(130, now);
+        oscL.frequency.exponentialRampToValueAtTime(75, now + 1.6);
+        oscR.frequency.setValueAtTime(130, now);
+        oscR.frequency.exponentialRampToValueAtTime(75, now + 1.6);
       } else {
         const baseFreq = 440 + chIdx * 65;
         oscL.frequency.setValueAtTime(baseFreq, now);
@@ -972,23 +990,16 @@ class HostAudioEngine {
         oscR.frequency.exponentialRampToValueAtTime(baseFreq * 1.5, now + 0.4);
       }
 
-      // Matrix gain mapping for the 5.1 positions
       let leftGain = 0;
       let rightGain = 0;
 
       switch (chIdx) {
-        case 0: // Front Left
-          leftGain = 0.8; rightGain = 0.05; break;
-        case 1: // Center
-          leftGain = 0.6; rightGain = 0.6; break;
-        case 2: // Front Right
-          leftGain = 0.05; rightGain = 0.8; break;
-        case 3: // Surround Right (out of phase)
-          leftGain = -0.5; rightGain = 0.7; break;
-        case 4: // Surround Left (out of phase)
-          leftGain = 0.7; rightGain = -0.5; break;
-        case 5: // Subwoofer
-          leftGain = 0.7; rightGain = 0.7; break;
+        case 0: leftGain = 0.8; rightGain = 0.05; break;
+        case 1: leftGain = 0.6; rightGain = 0.6; break;
+        case 2: leftGain = 0.05; rightGain = 0.8; break;
+        case 3: leftGain = -0.5; rightGain = 0.7; break;
+        case 4: leftGain = 0.7; rightGain = -0.5; break;
+        case 5: leftGain = 0.7; rightGain = 0.7; break;
       }
 
       gL.gain.setValueAtTime(leftGain, now);
@@ -1014,13 +1025,6 @@ class HostAudioEngine {
     this.demoTimer = setInterval(orbitTick, 2000);
   }
 
-  /**
-   * Acoustic Sync Calibration Pulse Generator
-   * Emits an ultra-sharp 1000Hz transient click with 50Hz sub thump precisely
-   * every 500ms on the half-second master clock boundary.
-   * If any device is even 3ms out of alignment, the human ear immediately hears a double-click.
-   * When synchronized under sub-millisecond lock, all phones fire as ONE solid acoustic impulse!
-   */
   _startSyncPulseLoop(destination) {
     const ctx = this.audioCtx;
 
@@ -1029,7 +1033,6 @@ class HostAudioEngine {
 
       const now = ctx.currentTime;
 
-      // 1. Crisp Woodblock High-Frequency Transient (1.2kHz bandpassed click)
       const osc = ctx.createOscillator();
       const g = ctx.createGain();
       osc.type = 'triangle';
@@ -1045,12 +1048,11 @@ class HostAudioEngine {
       osc.start(now);
       osc.stop(now + 0.04);
 
-      // 2. Sub-bass acoustic thump
       const subOsc = ctx.createOscillator();
       const subGain = ctx.createGain();
       subOsc.type = 'sine';
-      subOsc.frequency.setValueAtTime(90, now);
-      subOsc.frequency.exponentialRampToValueAtTime(45, now + 0.04);
+      subOsc.frequency.setValueAtTime(120, now);
+      subOsc.frequency.exponentialRampToValueAtTime(70, now + 0.04);
 
       subGain.gain.setValueAtTime(0.6, now);
       subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
