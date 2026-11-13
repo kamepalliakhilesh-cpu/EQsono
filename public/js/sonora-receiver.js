@@ -1,8 +1,8 @@
 /**
  * sonora. - Mobile Receiver Application Client
- * Continuous Ring-Buffer Playback Engine with 4-point Hermite Cubic Fractional Resampling,
- * Proportional-Integral Phase-Locked Loop (PLL), Packet Loss Concealment (PLC),
- * and off-main-thread AudioWorklet execution (with seamless HTTP LAN fallback).
+ * Direct Peer-to-Peer WebRTC UDP DataChannel Receiver (`ordered: false, maxRetransmits: 0`)
+ * with NetEQ-Inspired Adaptive Jitter Buffer (20ms floor), 16ms fast start, 38ms anti-lag clamp,
+ * and 4-point Hermite Cubic Fractional Resampling.
  */
 
 (function () {
@@ -24,6 +24,12 @@
   let hostOnline = true;
   let reconnectTimer = null;
 
+  // WebRTC P2P UDP Receiver State
+  let rtcPeer = null;
+  let rtcDataChannel = null;
+  let rtcIceQueue = [];
+  let isUdpActive = false;
+
   // Persistent Device ID
   let deviceId = localStorage.getItem('sonora_dev_id');
   if (!deviceId) {
@@ -37,9 +43,9 @@
   let streamActiveTimer = null;
 
   /**
-   * Continuous Circular Ring Buffer + 4-Point Hermite Cubic Resampler + Smooth PLL
-   * Used directly by the HTTP LAN fallback ScriptProcessorNode so non-HTTPS mobile
-   * connections enjoy the exact same zero-boundary, click-free audio as AudioWorklet.
+   * NetEQ-Inspired Adaptive Jitter Buffer + Continuous Ring Buffer + 4-Point Hermite Cubic Resampler
+   * Measures real-time inter-arrival jitter (σ) to dynamically shrink buffer depth to ~20ms on
+   * clean UDP / 5GHz / USB links while clamping maximum lag to +38ms.
    */
   class ContinuousRingPlayer {
     constructor(contextSampleRate) {
@@ -57,11 +63,14 @@
       this.latestEndPlayTimeMs = 0;
       this.latestWriteAnchor = 0;
 
+      this.lastArrivalPerfMs = null;
+      this.jitterMs = 4.0;
+
       this.smoothedErrorMs = 0;
       this.driftIntegral = 0;
       this.lastOutSample = 0;
       this.fadeRemaining = 0;
-      this.fadeTotal = 128;
+      this.fadeTotal = 96;
       this.fadeStartSample = 0;
     }
 
@@ -70,6 +79,7 @@
       this.readSamples = 0;
       this.isPlaying = false;
       this.lastSeq = null;
+      this.lastArrivalPerfMs = null;
       this.smoothedErrorMs = 0;
       this.driftIntegral = 0;
       this.fadeStartSample = this.lastOutSample;
@@ -84,64 +94,62 @@
         this.reset();
       }
 
+      const nominalFrameMs = (numSamples / this.streamSampleRate) * 1000;
+      const nowPerf = performance.now();
+      if (this.lastArrivalPerfMs !== null) {
+        const arrivalDeltaMs = nowPerf - this.lastArrivalPerfMs;
+        const instJitter = Math.abs(arrivalDeltaMs - nominalFrameMs);
+        if (instJitter < 120) {
+          this.jitterMs = (this.jitterMs * 0.92) + (instJitter * 0.08);
+        }
+      }
+      this.lastArrivalPerfMs = nowPerf;
+
       if (this.lastSeq !== null) {
         const seqDelta = (seq - this.lastSeq) & 0xffff;
         if (seqDelta === 0 || seqDelta > 60000) {
           return;
         }
-        if (seqDelta > 1 && seqDelta <= 5) {
+        if (seqDelta > 1 && seqDelta <= 4) {
           const missingPackets = seqDelta - 1;
           const missingSamples = missingPackets * numSamples;
           const prevIdx = (this.writeSamples - 1) & this.RING_MASK;
           const baseVal = this.writeSamples > 0 ? this.ring[prevIdx] : 0;
           for (let m = 0; m < missingSamples; m++) {
-            const decay = Math.exp(-m / (numSamples * 0.5));
+            const decay = Math.exp(-m / (numSamples * 0.45));
             this.ring[(this.writeSamples + m) & this.RING_MASK] = baseVal * decay;
           }
           this.writeSamples += missingSamples;
-        } else if (seqDelta > 5) {
+        } else if (seqDelta > 4) {
           this.reset();
         }
       }
 
       this.lastSeq = seq;
 
-      if (this.writeSamples - this.readSamples > this.RING_SIZE - numSamples - 2048) {
-        this.readSamples = this.writeSamples - Math.floor(this.streamSampleRate * 0.18);
-        this.smoothedErrorMs = 0;
-        this.driftIntegral = 0;
-      }
-
       for (let i = 0; i < numSamples; i++) {
         this.ring[(this.writeSamples + i) & this.RING_MASK] = samples[i];
       }
       this.writeSamples += numSamples;
       this.latestWriteAnchor = this.writeSamples;
-      this.latestEndPlayTimeMs = targetPlayTimeMs + ((numSamples / this.streamSampleRate) * 1000);
+      this.latestEndPlayTimeMs = targetPlayTimeMs + nominalFrameMs;
     }
 
-    render(outCh, nowMasterMs, outputLatencyMs, speakerDelayMs) {
+    render(outCh, speakerDelayMs) {
       const len = outCh.length;
       const ratio = this.streamSampleRate / this.contextSampleRate;
-      const minPreRollSamples = Math.floor(this.streamSampleRate * 0.045);
-
-      const desiredPlayTimeMs = nowMasterMs + outputLatencyMs - speakerDelayMs;
-      const idealReadSamples = this.latestWriteAnchor -
-        (((this.latestEndPlayTimeMs - desiredPlayTimeMs) / 1000) * this.streamSampleRate);
+      const minPreRollSamples = Math.floor(this.streamSampleRate * 0.016); // 16ms fast pre-roll
+      const adaptiveCushionMs = Math.max(20, Math.min(65, 20 + (this.jitterMs * 1.8))) + speakerDelayMs;
+      const desiredBufferedSamples = Math.floor((adaptiveCushionMs / 1000) * this.streamSampleRate);
 
       if (!this.isPlaying) {
-        if (this.writeSamples < minPreRollSamples || idealReadSamples < 0) {
+        if (this.writeSamples < minPreRollSamples) {
           outCh.fill(0);
           this.lastOutSample = 0;
           return;
         }
-        const availableFromIdeal = this.writeSamples - idealReadSamples;
-        if (availableFromIdeal < minPreRollSamples) {
-          outCh.fill(0);
-          this.lastOutSample = 0;
-          return;
-        }
-        this.readSamples = Math.max(1, idealReadSamples);
+        const startOffset = Math.min(this.writeSamples - 1, Math.max(minPreRollSamples, desiredBufferedSamples));
+        this.readSamples = Math.max(1, this.writeSamples - startOffset);
         this.isPlaying = true;
         this.smoothedErrorMs = 0;
         this.driftIntegral = 0;
@@ -149,22 +157,23 @@
         this.fadeRemaining = this.fadeTotal;
       }
 
-      if (this.writeSamples - this.readSamples < len * ratio + 4) {
+      const availableSamples = this.writeSamples - this.readSamples;
+      if (availableSamples < len * ratio + 4) {
         for (let i = 0; i < len; i++) {
-          this.lastOutSample *= 0.92;
+          this.lastOutSample *= 0.88;
           outCh[i] = this.lastOutSample;
         }
         this.isPlaying = false;
         return;
       }
 
-      const rawErrorSamples = idealReadSamples - this.readSamples;
+      const rawErrorSamples = availableSamples - desiredBufferedSamples;
       const rawErrorMs = (rawErrorSamples / this.streamSampleRate) * 1000;
-      this.smoothedErrorMs = (this.smoothedErrorMs * 0.92) + (rawErrorMs * 0.08);
+      this.smoothedErrorMs = (this.smoothedErrorMs * 0.85) + (rawErrorMs * 0.15);
 
-      if (Math.abs(this.smoothedErrorMs) > 120) {
-        const targetRead = Math.max(1, Math.min(this.writeSamples - minPreRollSamples, idealReadSamples));
-        this.readSamples = targetRead;
+      // Tight anti-lag clamp: never allow buffer lag to exceed adaptive target by >38ms
+      if (this.smoothedErrorMs > 38 || this.smoothedErrorMs < -30) {
+        this.readSamples = Math.max(1, this.writeSamples - desiredBufferedSamples);
         this.smoothedErrorMs = 0;
         this.driftIntegral = 0;
         this.fadeStartSample = this.lastOutSample;
@@ -172,10 +181,10 @@
       }
 
       let rateAdj = 0;
-      if (Math.abs(this.smoothedErrorMs) > 0.8) {
-        this.driftIntegral = Math.max(-0.001, Math.min(0.001, this.driftIntegral + this.smoothedErrorMs * 0.000002));
-        rateAdj = (this.smoothedErrorMs * 0.00012) + this.driftIntegral;
-        rateAdj = Math.max(-0.0035, Math.min(0.0035, rateAdj));
+      if (Math.abs(this.smoothedErrorMs) > 0.5) {
+        this.driftIntegral = Math.max(-0.0015, Math.min(0.0015, this.driftIntegral + this.smoothedErrorMs * 0.0000015));
+        rateAdj = (this.smoothedErrorMs * 0.00022) + this.driftIntegral;
+        rateAdj = Math.max(-0.005, Math.min(0.005, rateAdj));
       }
 
       const step = ratio * (1.0 + rateAdj);
@@ -273,7 +282,110 @@
     if (!online && audioActivationStatus && isAudioUnlocked && !btnActivateSpeaker.classList.contains('muted')) {
       audioActivationStatus.textContent = 'Host disconnected · Waiting for host...';
     } else if (online && audioActivationStatus && isAudioUnlocked && !btnActivateSpeaker.classList.contains('muted')) {
-      audioActivationStatus.textContent = 'Active · Listening for broadcast';
+      audioActivationStatus.textContent = isUdpActive
+        ? 'Active · WebRTC UDP Direct stream'
+        : 'Active · Listening for broadcast';
+    }
+  }
+
+  function closeRtcReceiver() {
+    isUdpActive = false;
+    rtcIceQueue = [];
+    if (rtcDataChannel) {
+      try { rtcDataChannel.close(); } catch (e) {}
+      rtcDataChannel = null;
+    }
+    if (rtcPeer) {
+      try { rtcPeer.close(); } catch (e) {}
+      rtcPeer = null;
+    }
+  }
+
+  function notifyRtcStatus(active) {
+    isUdpActive = active;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: 'RTC_STATUS',
+        active
+      }));
+    }
+    updateHostStatusUi(hostOnline);
+  }
+
+  async function handleWebRtcSignal(signal) {
+    if (typeof RTCPeerConnection === 'undefined' || !signal) return;
+    try {
+      if (signal.sdp && signal.sdp.type === 'offer') {
+        closeRtcReceiver();
+        const pc = new RTCPeerConnection({
+          iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        });
+        rtcPeer = pc;
+
+        pc.onicecandidate = (event) => {
+          if (event.candidate && ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              type: 'WEBRTC_SIGNAL',
+              signal: { candidate: event.candidate }
+            }));
+          }
+        };
+
+        pc.ondatachannel = (event) => {
+          const dc = event.channel;
+          rtcDataChannel = dc;
+          dc.binaryType = 'arraybuffer';
+
+          dc.onopen = () => {
+            notifyRtcStatus(true);
+          };
+
+          dc.onmessage = (ev) => {
+            if (ev.data instanceof ArrayBuffer && isAudioUnlocked && audioCtx) {
+              handleAudioPacket(ev.data);
+            }
+          };
+
+          dc.onclose = () => {
+            notifyRtcStatus(false);
+          };
+
+          dc.onerror = () => {
+            notifyRtcStatus(false);
+          };
+        };
+
+        pc.onconnectionstatechange = () => {
+          if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected' || pc.connectionState === 'closed') {
+            notifyRtcStatus(false);
+          }
+        };
+
+        await pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+        while (rtcIceQueue.length > 0) {
+          const c = rtcIceQueue.shift();
+          await pc.addIceCandidate(new RTCIceCandidate(c));
+        }
+
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'WEBRTC_SIGNAL',
+            signal: { sdp: pc.localDescription }
+          }));
+        }
+      } else if (signal.candidate) {
+        if (rtcPeer && rtcPeer.remoteDescription && rtcPeer.remoteDescription.type) {
+          await rtcPeer.addIceCandidate(new RTCIceCandidate(signal.candidate));
+        } else {
+          rtcIceQueue.push(signal.candidate);
+        }
+      }
+    } catch (err) {
+      console.warn('WebRTC receiver signal warning:', err);
+      notifyRtcStatus(false);
     }
   }
 
@@ -287,6 +399,7 @@
     workletNode.port.postMessage({
       type: 'SYNC_CONFIG',
       ntpOffsetMs: ntpSync ? ntpSync.offset : 0,
+      ntpSynced: Boolean(ntpSync && ntpSync.isSynced),
       perSpeakerDelayMs,
       outputLatencyMs: outLatMs,
       contextBaseEpochMs
@@ -340,6 +453,7 @@
       ntpSync.stop();
       ntpSync = null;
     }
+    closeRtcReceiver();
     if (ws) ws.close();
     resetPlaybackStream();
     if (wakeLock) {
@@ -375,15 +489,16 @@
 
         if (syncQualityPill && stats) {
           const syncErrorMs = Math.max(0.2, stats.jitter || (stats.rtt / 2));
+          const protoTag = isUdpActive ? 'UDP P2P' : 'Direct';
           if (stats.quality === 'STUDIO_LOCK') {
             syncQualityPill.className = 'sync-quality-pill tier-studio';
-            syncQualityPill.textContent = `Phase lock · ±${syncErrorMs.toFixed(1)}ms`;
+            syncQualityPill.textContent = `${protoTag} lock · ±${syncErrorMs.toFixed(1)}ms`;
           } else if (stats.quality === 'PRECISION') {
             syncQualityPill.className = 'sync-quality-pill tier-precision';
-            syncQualityPill.textContent = `Precision sync · ±${syncErrorMs.toFixed(1)}ms`;
+            syncQualityPill.textContent = `${protoTag} sync · ±${syncErrorMs.toFixed(1)}ms`;
           } else {
             syncQualityPill.className = 'sync-quality-pill tier-good';
-            syncQualityPill.textContent = `Wi-Fi buffer · ±${syncErrorMs.toFixed(1)}ms`;
+            syncQualityPill.textContent = `${protoTag} buffer · ±${syncErrorMs.toFixed(1)}ms`;
           }
         }
 
@@ -411,7 +526,7 @@
       }));
     };
 
-    socket.onmessage = (event) => {
+    socket.onmessage = async (event) => {
       if (event.data instanceof ArrayBuffer) {
         if (!isAudioUnlocked || !audioCtx) return;
         handleAudioPacket(event.data);
@@ -423,6 +538,8 @@
 
         if (msg.type === 'SYNC_PONG') {
           if (ntpSync) ntpSync.handlePong(msg);
+        } else if (msg.type === 'WEBRTC_SIGNAL') {
+          await handleWebRtcSignal(msg.signal);
         } else if (msg.type === 'REGISTERED') {
           hasRegistered = true;
           setJoinSubmitting(false);
@@ -439,7 +556,10 @@
           if (typeof msg.hostOnline === 'boolean') updateHostStatusUi(msg.hostOnline);
         } else if (msg.type === 'HOST_STATUS') {
           updateHostStatusUi(Boolean(msg.online));
-          if (!msg.online) resetPlaybackStream();
+          if (!msg.online) {
+            closeRtcReceiver();
+            resetPlaybackStream();
+          }
         } else if (msg.type === 'ROLE_ASSIGNED') {
           updateRole(msg.role, msg.channelIndex);
         } else if (msg.type === 'SET_SPEAKER_DELAY') {
@@ -472,6 +592,7 @@
         ntpSync.stop();
         ntpSync = null;
       }
+      closeRtcReceiver();
       if (!hasRegistered && !joinRejected) {
         setJoinSubmitting(false);
         if (joinError) {
@@ -482,7 +603,7 @@
       }
       if (!joinRejected && activeScreen.classList.contains('visible')) {
         if (activeRoomEyebrow) activeRoomEyebrow.textContent = 'Reconnecting...';
-        reconnectTimer = setTimeout(connectWs, 2000);
+        reconnectTimer = setTimeout(connectWs, 1500);
       }
     };
   }
@@ -533,6 +654,9 @@
   async function unlockAudio() {
     if (isAudioUnlocked) {
       if (gainNode && audioCtx) {
+        if (audioCtx.state === 'suspended') {
+          await audioCtx.resume();
+        }
         const isMuted = gainNode.gain.value === 0;
         const targetVol = speakerVolume ? parseFloat(speakerVolume.value) : 1.0;
         const newGain = isMuted ? (targetVol || 1.0) : 0;
@@ -544,7 +668,7 @@
           btnActivateSpeaker.innerHTML = SPEAKER_ACTIVE_SVG;
           btnActivateSpeaker.setAttribute('aria-label', 'Mute speaker');
           btnActivateSpeaker.setAttribute('aria-pressed', 'false');
-          audioActivationStatus.textContent = hostOnline ? 'Active · Synced speaker' : 'Host disconnected · Waiting for host...';
+          updateHostStatusUi(hostOnline);
         } else {
           btnActivateSpeaker.classList.remove('playing');
           btnActivateSpeaker.classList.add('muted');
@@ -573,7 +697,6 @@
       gainNode.gain.value = initialVol;
       gainNode.connect(audioCtx.destination);
 
-      // Prefer off-main-thread AudioWorklet when available (HTTPS or localhost)
       let useWorklet = false;
       if (audioCtx.audioWorklet && typeof AudioWorkletNode !== 'undefined') {
         try {
@@ -592,21 +715,16 @@
       }
 
       if (!useWorklet) {
-        // Plain HTTP LAN fallback: single persistent continuous ring buffer node (zero per-packet node creation)
+        // Minimum-latency 256-sample ScriptProcessor fallback (~5.3ms callback period @ 48kHz)
         ringEngine = new ContinuousRingPlayer(audioCtx.sampleRate);
-        fallbackScriptNode = audioCtx.createScriptProcessor(1024, 0, 1);
+        fallbackScriptNode = audioCtx.createScriptProcessor(256, 0, 1);
         fallbackScriptNode.onaudioprocess = (e) => {
           const outCh = e.outputBuffer.getChannelData(0);
           if (!ringEngine) {
             outCh.fill(0);
             return;
           }
-          const nowMaster = ntpSync
-            ? ntpSync.now()
-            : ((window.performance && performance.timeOrigin) ? (performance.timeOrigin + performance.now()) : Date.now());
-          const outLatMs = ((audioCtx.outputLatency || audioCtx.baseLatency || 0) * 1000) +
-            ((1024 / audioCtx.sampleRate) * 1000);
-          ringEngine.render(outCh, nowMaster, outLatMs, perSpeakerDelayMs);
+          ringEngine.render(outCh, perSpeakerDelayMs);
         };
         fallbackScriptNode.connect(gainNode);
       }
@@ -629,11 +747,11 @@
       btnActivateSpeaker.setAttribute('aria-label', 'Mute speaker');
       btnActivateSpeaker.setAttribute('aria-pressed', 'false');
 
-      audioActivationStatus.textContent = hostOnline ? 'Active · Listening for broadcast' : 'Host disconnected · Waiting for host...';
+      updateHostStatusUi(hostOnline);
 
       acquireWakeLock();
       resetPlaybackStream();
-      playTone(523.25, 0.15);
+      playTone(523.25, 0.10);
     } catch (err) {
       btnActivateSpeaker.classList.remove('unlocking');
       audioActivationStatus.textContent = 'Tap to retry';
@@ -677,10 +795,11 @@
     osc.stop(audioCtx.currentTime + dur);
   }
 
-  /**
-   * Decodes incoming binary audio frame and feeds the Continuous Ring Buffer Engine
-   */
   function handleAudioPacket(arrayBuffer) {
+    if (audioCtx && audioCtx.state === 'suspended') {
+      audioCtx.resume().catch(() => {});
+    }
+
     const headerSize = 16;
     if (arrayBuffer.byteLength <= headerSize) return;
 
@@ -692,8 +811,12 @@
     const targetSampleRate = view.getUint32(12, true) || 48000;
     const isAdpcm = (flags & 0x01) !== 0;
 
-    if (channelId !== 255 && (myChannelIndex === -1 || channelId !== myChannelIndex)) {
-      return;
+    if (channelId !== 255) {
+      if (myChannelIndex === -1) {
+        if (channelId !== 1 && channelId !== 2) return;
+      } else if (channelId !== myChannelIndex) {
+        return;
+      }
     }
 
     const payloadByteLength = arrayBuffer.byteLength - headerSize;
@@ -737,7 +860,6 @@
       ringEngine.ingestPacket(decodeScratch, numSamples, targetPlayTime, seq, targetSampleRate);
     }
 
-    // Throttled UI aura activity indicator (runs at most once every 250ms to avoid DOM GC jitter)
     const now = performance.now();
     if (now - lastAuraUpdateMs > 250) {
       lastAuraUpdateMs = now;

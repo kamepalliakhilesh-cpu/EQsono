@@ -2,7 +2,7 @@
  * Host Audio Processing & Streaming Engine
  * Manages Web Audio context, zero-allocation DSP spatial matrix, system audio capture,
  * media file playback, synthetic 5.1 test tones, continuous sample-accurate timestamping,
- * and single-MTU binary packet streaming.
+ * and Direct Peer-to-Peer WebRTC UDP DataChannel streaming (with automatic WebSocket fallback).
  */
 class HostAudioEngine {
   constructor(ws, ntpSync) {
@@ -14,6 +14,9 @@ class HostAudioEngine {
     this.currentMode = 'PARTY'; // 'PARTY' (Stereo) | 'DOLBY' (Surround)
     this.activeChannels = new Set([255]); // Active destination channels
     this.connectedDeviceCount = 0;
+
+    // Direct P2P WebRTC UDP DataChannels: deviceId -> { dc, channelIndex }
+    this.peerDataChannels = new Map();
 
     // DSP Nodes
     this.analyser = null;
@@ -43,14 +46,14 @@ class HostAudioEngine {
     this.fileLoop = true;
     this.onStreamEnded = null;
 
-    // Master sync buffer delay (180ms default to cleanly absorb 102.4ms Wi-Fi DTIM beacon intervals)
-    this.broadcastDelayMs = 180;
+    // Ultra-low-latency default lead buffer (35ms for real-time video lip-sync)
+    this.broadcastDelayMs = 35;
     this.initialLaptopVolume = 0.75;
 
     // Audio payload codec: 'auto' (Smart Adaptive), 'pcm' (Lossless 16-bit), or 'adpcm' (4:1 Stateful IMA-ADPCM)
     this.codec = 'auto';
 
-    // Subwoofer Bandpass Filter: 65Hz High-Pass (protects mobile micro-speakers) + 180Hz Low-Pass (upper-bass punch)
+    // Subwoofer Bandpass Filter: 65Hz High-Pass + 180Hz Low-Pass
     this._subLowpass = {
       b0: 0, b1: 0, b2: 0, a1: 0, a2: 0,
       x1: 0, x2: 0, y1: 0, y2: 0
@@ -77,26 +80,24 @@ class HostAudioEngine {
     };
 
     // Studio Demo Synthesizer State
-    this.demoType = 'none'; // 'synthwave' | 'spatial-orbit' | 'sync-pulse'
+    this.demoType = 'none';
     this.demoTimer = null;
     this.demoAudioNodes = [];
 
     // Pre-allocated static PCM buffers (2048 samples max) - Zero GC allocation during streaming
     const maxBufferSize = 2048;
     this.pcmBuffers = {
-      255: new Int16Array(maxBufferSize), // Party / Stereo downmix
-      1: new Int16Array(maxBufferSize),   // Front Left
-      2: new Int16Array(maxBufferSize),   // Front Right
-      3: new Int16Array(maxBufferSize),   // Center
-      4: new Int16Array(maxBufferSize),   // Subwoofer (LFE)
-      5: new Int16Array(maxBufferSize),   // Surround Left
-      6: new Int16Array(maxBufferSize)    // Surround Right
+      255: new Int16Array(maxBufferSize),
+      1: new Int16Array(maxBufferSize),
+      2: new Int16Array(maxBufferSize),
+      3: new Int16Array(maxBufferSize),
+      4: new Int16Array(maxBufferSize),
+      5: new Int16Array(maxBufferSize),
+      6: new Int16Array(maxBufferSize)
     };
 
-    // Reusable buffer for synthesized channel-test tones
     this.testBuffer = new Int16Array(maxBufferSize);
 
-    // Pre-allocated static packet buffers for each channel (16 byte header + 2048 * 2 bytes = 4112 bytes)
     const headerSize = 16;
     const packetByteSize = headerSize + (maxBufferSize * 2);
     this.headerSize = headerSize;
@@ -149,7 +150,6 @@ class HostAudioEngine {
       this.masterGain = this.audioCtx.createGain();
       this.masterGain.gain.value = 1.0;
 
-      // Connect Laptop path: MasterGain -> Analyser -> Delay -> Gain -> Destination
       this.masterGain.connect(this.analyser);
       this.analyser.connect(this.laptopDelayNode);
       this.laptopDelayNode.connect(this.laptopGain);
@@ -163,6 +163,21 @@ class HostAudioEngine {
       } catch (err) {
         console.warn('AudioWorklet unavailable, falling back to ScriptProcessor:', err);
       }
+    }
+  }
+
+  setPeerDataChannel(deviceId, dc, channelIndex = 255) {
+    if (!dc) {
+      this.peerDataChannels.delete(deviceId);
+    } else {
+      this.peerDataChannels.set(deviceId, { dc, channelIndex });
+    }
+  }
+
+  updatePeerChannel(deviceId, channelIndex) {
+    const entry = this.peerDataChannels.get(deviceId);
+    if (entry) {
+      entry.channelIndex = channelIndex;
     }
   }
 
@@ -220,15 +235,10 @@ class HostAudioEngine {
     if (typeof AudioCodec === 'undefined') return false;
     if (this.codec === 'adpcm') return true;
     if (this.codec === 'pcm') return false;
-    // 'auto' mode: use lossless single-MTU PCM for 1-2 stereo speakers;
-    // switch to stateful 4:1 ADPCM when 3+ devices or Surround 5.1 channels are active
     const activeChCount = this.activeChannels ? this.activeChannels.size : 1;
     return this.currentMode === 'DOLBY' || activeChCount > 1 || this.connectedDeviceCount >= 3;
   }
 
-  /**
-   * Start capturing laptop system / tab audio
-   */
   async startSystemAudio() {
     await this.init();
     this.stopCurrentSource();
@@ -251,7 +261,6 @@ class HostAudioEngine {
         throw new Error('No audio track selected! Please check the "Share audio" box when sharing.');
       }
 
-      // Stop video track immediately to save battery & CPU
       this.mediaStream.getVideoTracks().forEach(t => t.stop());
 
       this.sourceNode = this.audioCtx.createMediaStreamSource(this.mediaStream);
@@ -270,9 +279,6 @@ class HostAudioEngine {
     }
   }
 
-  /**
-   * Start playing local media file
-   */
   async startFileAudio(file) {
     await this.init();
     this.stopCurrentSource();
@@ -364,15 +370,11 @@ class HostAudioEngine {
     };
   }
 
-  /**
-   * Setup Web Audio Processing Graph & DSP Slicing
-   */
   setupProcessingGraph() {
     if (!this.sourceNode) return;
 
     this.sourceNode.connect(this.masterGain);
 
-    // Reset DSP filter states cleanly when starting a new source
     this._subLowpass.x1 = 0; this._subLowpass.x2 = 0;
     this._subLowpass.y1 = 0; this._subLowpass.y2 = 0;
     this._subHighpass.x1 = 0; this._subHighpass.x2 = 0;
@@ -402,8 +404,8 @@ class HostAudioEngine {
         this.handlePcmFrame(left, right, audioTime);
       };
     } else {
-      // Fallback for non-secure HTTP LAN contexts where AudioWorklet is unavailable
-      const bufferSize = 1024;
+      // Low-latency 512-sample ScriptProcessor fallback
+      const bufferSize = 512;
       this.processor = this.audioCtx.createScriptProcessor(bufferSize, 2, 2);
       this.sourceNode.connect(this.processor);
       this.processor.connect(this.processorMuteGain);
@@ -416,7 +418,6 @@ class HostAudioEngine {
   }
 
   _setupSubFilter(sampleRate) {
-    // 1. 65Hz High-Pass Butterworth Filter (blocks DC & sub-65Hz cone-rattling excursion on mobile phones)
     {
       const fc = 65;
       const omega = 2 * Math.PI * fc / sampleRate;
@@ -435,7 +436,6 @@ class HostAudioEngine {
         x1: 0, x2: 0, y1: 0, y2: 0
       };
     }
-    // 2. 180Hz Low-Pass Butterworth Filter (retains audible 65-180Hz upper-bass punch for mobile drivers)
     {
       const fc = 180;
       const omega = 2 * Math.PI * fc / sampleRate;
@@ -456,11 +456,6 @@ class HostAudioEngine {
     }
   }
 
-  /**
-   * Transparent studio peak limiter.
-   * 100% linear up to 0.92 (-0.7 dBFS) so music transients stay crystal clear,
-   * with smooth hyperbolic tangent limiting above 0.92 to prevent Int16 clipping.
-   */
   _softLimit(x) {
     if (x > -0.92 && x < 0.92) return x;
     if (x >= 0.92) return 0.92 + 0.08 * Math.tanh((x - 0.92) / 0.08);
@@ -471,12 +466,8 @@ class HostAudioEngine {
     return this.audioLevels;
   }
 
-  /**
-   * Fallback ScriptProcessor handler: splits 1024-sample buffer into two 512-sample
-   * sub-frames so every PCM packet (1,040 bytes) fits inside a single 1,460-byte TCP MSS frame.
-   */
   handleAudioProcess(event) {
-    if (!this.isRunning || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    if (!this.isRunning) return;
 
     if (event.outputBuffer) {
       for (let ch = 0; ch < event.outputBuffer.numberOfChannels; ch++) {
@@ -490,25 +481,11 @@ class HostAudioEngine {
     const totalLen = inputBuffer.length;
     const chunkStartAudioTime = this.audioCtx.currentTime - (totalLen / this.sampleRate);
 
-    if (totalLen > 640) {
-      const half = totalLen >> 1;
-      this.handlePcmFrame(leftChannel.subarray(0, half), rightChannel.subarray(0, half), chunkStartAudioTime);
-      this.handlePcmFrame(
-        leftChannel.subarray(half, totalLen),
-        rightChannel.subarray(half, totalLen),
-        chunkStartAudioTime + (half / this.sampleRate)
-      );
-    } else {
-      this.handlePcmFrame(leftChannel, rightChannel, chunkStartAudioTime);
-    }
+    this.handlePcmFrame(leftChannel, rightChannel, chunkStartAudioTime);
   }
 
-  /**
-   * Processes one stereo PCM frame (640 samples from Worklet or 512 from fallback),
-   * applies DSP matrix, and transmits sample-accurate single-MTU packets.
-   */
   handlePcmFrame(leftChannel, rightChannel, chunkStartAudioTime) {
-    if (!this.isRunning || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    if (!this.isRunning) return;
 
     const numSamples = leftChannel.length;
     const localNow = this.ntpSync ? this.ntpSync.getLocalTime() : Date.now();
@@ -521,7 +498,6 @@ class HostAudioEngine {
       this.totalSamplesProcessed = 0;
     }
 
-    // Drift / Pause detector: if audio context jumped (e.g. seek or tab freeze >150ms), re-anchor cleanly
     const expectedAudioTime = this.streamAnchorAudioTime + (this.totalSamplesProcessed / this.sampleRate);
     if (Math.abs(chunkStartAudioTime - expectedAudioTime) > 0.150) {
       this.streamAnchorLocalTime = localNow - ageMs;
@@ -533,7 +509,6 @@ class HostAudioEngine {
       }
     }
 
-    // Gently slew anchored NTP offset (max ±0.02ms per frame) so live NTP updates never cause timestamp jitter
     if (this.ntpSync) {
       const offsetDiff = this.ntpSync.offset - this.streamAnchorNtpOffset;
       this.streamAnchorNtpOffset += Math.max(-0.02, Math.min(0.02, offsetDiff * 0.01));
@@ -626,11 +601,10 @@ class HostAudioEngine {
 
         if (needSub) {
           const monoSum = (l + r) * 0.5;
-          // 65Hz High-pass stage
           const hOut = hp.b0 * monoSum + hp.b1 * hp.x1 + hp.b2 * hp.x2 - hp.a1 * hp.y1 - hp.a2 * hp.y2;
           hp.x2 = hp.x1; hp.x1 = monoSum;
           hp.y2 = hp.y1; hp.y1 = hOut;
-          // 180Hz Low-pass stage
+
           const lOut = lp.b0 * hOut + lp.b1 * lp.x1 + lp.b2 * lp.x2 - lp.a1 * lp.y1 - lp.a2 * lp.y2;
           lp.x2 = lp.x1; lp.x1 = hOut;
           lp.y2 = lp.y1; lp.y1 = lOut;
@@ -665,7 +639,9 @@ class HostAudioEngine {
   }
 
   /**
-   * Packs and sends binary audio frame over WebSocket without runtime allocations
+   * Sends binary audio frame directly over Peer-to-Peer WebRTC UDP DataChannels
+   * (`ordered: false, maxRetransmits: 0`) for zero-HoL-blocking delivery, with
+   * automatic WebSocket fallback for any receiver still completing ICE negotiation.
    */
   sendPcmPacket(targetPlayTime, seq, channelId, int16Samples, numSamples) {
     const headerSize = this.headerSize;
@@ -693,14 +669,30 @@ class HostAudioEngine {
     packetView.setUint8(11, flags);
     packetView.setUint32(12, this.sampleRate, true);
 
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(packetBuffer.slice(0, headerSize + payloadBytes));
+    const frameSlice = packetBuffer.slice(0, headerSize + payloadBytes);
+
+    // 1. Direct P2P WebRTC UDP transmission to all open peer data channels
+    let openRtcPeers = 0;
+    for (const peer of this.peerDataChannels.values()) {
+      if (peer.dc && peer.dc.readyState === 'open') {
+        openRtcPeers++;
+        const chMatch = channelId === 255 ||
+          peer.channelIndex === channelId ||
+          (peer.channelIndex === -1 && (channelId === 1 || channelId === 2));
+        if (chMatch && peer.dc.bufferedAmount < 16384) {
+          try {
+            peer.dc.send(frameSlice);
+          } catch (e) {}
+        }
+      }
+    }
+
+    // 2. WebSocket fallback only when at least one connected receiver is not yet on P2P UDP
+    if (openRtcPeers < this.connectedDeviceCount && this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(frameSlice);
     }
   }
 
-  /**
-   * Built-in Synthetic 5.1 Test Suite
-   */
   async playChannelTest(channelId, channelName) {
     await this.init();
 
@@ -737,8 +729,6 @@ class HostAudioEngine {
   }
 
   streamChannelTestTone(channelId) {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-
     const wireChannel = this.currentMode === 'PARTY' ? 255 : channelId;
     if (!this.packetBuffers[wireChannel]) return;
 
@@ -755,7 +745,7 @@ class HostAudioEngine {
     let seq = (this.sequence + 1) & 0xffff;
 
     while (sent < totalSamples) {
-      const count = Math.min(640, totalSamples - sent);
+      const count = Math.min(384, totalSamples - sent);
       for (let i = 0; i < count; i++) {
         const t = (sent + i) / this.sampleRate;
         const fadeIn = Math.min(1, t / 0.02);
@@ -886,7 +876,7 @@ class HostAudioEngine {
         const bassFilter = ctx.createBiquadFilter();
 
         bassOsc.type = 'sawtooth';
-        const bassFreq = (beatStep % 4 === 0 || beatStep % 4 === 2) ? chordData.bass * 2 : chordData.bass * 2;
+        const bassFreq = chordData.bass * 2;
         bassOsc.frequency.setValueAtTime(bassFreq, nextStepTime);
 
         bassFilter.type = 'lowpass';

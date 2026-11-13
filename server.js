@@ -44,8 +44,8 @@ function safeSendJson(ws, payload) {
 const PORT = process.env.PORT || 3000;
 // Capped at 6 connected speakers (exact 5.1 surround array) to prevent Wi-Fi unicast airtime saturation
 const MAX_RECEIVERS_PER_ROOM = 6;
-// Tight per-socket backpressure cap (~24 KB) to prevent multi-second TCP bufferbloat queues on slow links
-const MAX_RECEIVER_BUFFER_BYTES = 24 * 1024;
+// Ultra-tight per-socket backpressure cap (12 KB ~120ms) so fallback TCP sockets never accumulate bufferbloat lag
+const MAX_RECEIVER_BUFFER_BYTES = 12 * 1024;
 
 function sanitizeText(val, fallback, maxLen = 40) {
   const cleaned = String(val || '')
@@ -97,7 +97,7 @@ function createRoom(customName) {
     name: sanitizeText(customName, 'Studio room', 48),
     hostSecret: makeSecret(),
     hostSocket: null,
-    receivers: new Map(), // deviceId -> { ws, info, role, channelIndex, color, delayMs, rtt, offset }
+    receivers: new Map(), // deviceId -> { ws, info, role, channelIndex, color, delayMs, rtt, offset, rtcActive }
     receiverPrefs: new Map(), // deviceId -> { role, channelIndex, color, delayMs }
     mode: 'PARTY',
     createdAt: Date.now(),
@@ -168,6 +168,7 @@ function getAllLocalIpAddresses() {
         let type = 'LAN';
         if (/wi-fi|wlan|wireless/i.test(name)) type = 'Wi-Fi';
         else if (/local area connection/i.test(name) || iface.address.startsWith('192.168.137.')) type = 'Mobile Hotspot';
+        else if (/rndis|usb/i.test(name) || iface.address.startsWith('192.168.42.')) type = 'USB Tethering';
         else if (/ethernet/i.test(name)) type = 'Ethernet';
         list.push({ name, address: iface.address, type });
       }
@@ -185,7 +186,7 @@ app.get('/favicon.ico', (req, res) => {
   res.type('image/svg+xml').sendFile(path.join(__dirname, 'public', 'favicon.svg'));
 });
 
-// Healthcheck endpoint for cloud load balancers & container orchestrators
+// Healthcheck endpoint
 app.get('/health', (req, res) => {
   res.json({ ok: true, rooms: rooms.size, maxReceiversPerRoom: MAX_RECEIVERS_PER_ROOM, uptime: Math.round(process.uptime()) });
 });
@@ -329,6 +330,7 @@ function notifyHostDeviceList(room, force = false) {
       delayMs: dev.delayMs || 0,
       rtt: dev.rtt || 0,
       offset: dev.offset || 0,
+      rtcActive: Boolean(dev.rtcActive),
       color: dev.color || '#2dd4bf'
     });
   }
@@ -364,7 +366,7 @@ wss.on('connection', (ws, req) => {
   ws.on('error', () => { cleanupSocketMembership(ws); });
 
   ws.on('message', (message, isBinary) => {
-    // Binary audio packets from Host
+    // Binary audio packets from Host (fallback path for receivers without an active P2P WebRTC UDP channel)
     if (isBinary) {
       if (!ws.roomKey) return;
       const room = rooms.get(ws.roomKey);
@@ -375,19 +377,22 @@ wss.on('connection', (ws, req) => {
       room.lastActivity = Date.now();
 
       for (const receiver of room.receivers.values()) {
+        // Skip receivers that are already receiving direct P2P WebRTC UDP packets from the Host
+        if (receiver.rtcActive) continue;
         const rws = receiver.ws;
         if (rws.readyState === WebSocket.OPEN) {
-          if (targetChannel === 255 || receiver.channelIndex === targetChannel) {
-            if (rws.bufferedAmount < MAX_RECEIVER_BUFFER_BYTES) {
-              rws.send(message, { binary: true, compress: false });
-            }
+          const chMatch = targetChannel === 255 ||
+            receiver.channelIndex === targetChannel ||
+            (receiver.channelIndex === -1 && (targetChannel === 1 || targetChannel === 2));
+          if (chMatch && rws.bufferedAmount < MAX_RECEIVER_BUFFER_BYTES) {
+            rws.send(message, { binary: true, compress: false });
           }
         }
       }
       return;
     }
 
-    // JSON Control Messages
+    // JSON Control & WebRTC Signaling Messages
     try {
       const data = JSON.parse(message.toString());
 
@@ -400,6 +405,41 @@ wss.on('connection', (ws, req) => {
           serverReceiveTime: t1,
           serverSendTime: getMasterTime()
         });
+        return;
+      }
+
+      // WebRTC Signaling: Host <-> Receiver P2P UDP DataChannel setup
+      if (data.type === 'WEBRTC_SIGNAL' && ws.roomKey) {
+        const room = rooms.get(ws.roomKey);
+        if (!room) return;
+        if (ws.clientType === 'HOST' && data.targetDeviceId) {
+          const dev = room.receivers.get(data.targetDeviceId);
+          if (dev && dev.ws.readyState === WebSocket.OPEN) {
+            safeSendJson(dev.ws, {
+              type: 'WEBRTC_SIGNAL',
+              signal: data.signal
+            });
+          }
+        } else if (ws.clientType === 'RECEIVER' && ws.deviceId && room.hostSocket) {
+          safeSendJson(room.hostSocket, {
+            type: 'WEBRTC_SIGNAL',
+            fromDeviceId: ws.deviceId,
+            signal: data.signal
+          });
+        }
+        return;
+      }
+
+      // Receiver notifies whether its P2P WebRTC UDP DataChannel is active
+      if (data.type === 'RTC_STATUS' && ws.roomKey && ws.deviceId) {
+        const room = rooms.get(ws.roomKey);
+        if (room) {
+          const dev = room.receivers.get(ws.deviceId);
+          if (dev) {
+            dev.rtcActive = Boolean(data.active);
+            notifyHostDeviceList(room, true);
+          }
+        }
         return;
       }
 
@@ -522,7 +562,8 @@ wss.on('connection', (ws, req) => {
             color: restoredColor,
             delayMs: restoredDelayMs,
             rtt: 0,
-            offset: 0
+            offset: 0,
+            rtcActive: false
           });
           room.lastActivity = Date.now();
 
@@ -552,7 +593,7 @@ wss.on('connection', (ws, req) => {
             dev.rtt = Number.isFinite(data.rtt) ? data.rtt : 0;
             dev.offset = Number.isFinite(data.offset) ? data.offset : 0;
             room.lastActivity = Date.now();
-            notifyHostDeviceList(room); // throttled
+            notifyHostDeviceList(room);
           }
         }
         return;
@@ -567,7 +608,7 @@ wss.on('connection', (ws, req) => {
 
         if (data.type === 'SET_MODE') {
           if (data.mode !== 'PARTY' && data.mode !== 'DOLBY') return;
-          room.mode = data.mode; // 'DOLBY' | 'PARTY'
+          room.mode = data.mode;
           for (const dev of room.receivers.values()) {
             if (dev.ws.readyState === WebSocket.OPEN) {
               dev.ws.send(JSON.stringify({ type: 'MODE_UPDATED', mode: room.mode }));
@@ -649,7 +690,7 @@ const interval = setInterval(() => {
   });
 }, 15000);
 
-// Inactive room cleanup: delete rooms idle for >30 minutes with no host or receivers
+// Inactive room cleanup
 const cleanupInterval = setInterval(() => {
   const now = Date.now();
   for (const [key, room] of rooms.entries()) {
@@ -689,7 +730,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(` > Server Listening on Port:  ${PORT} (${scheme.toUpperCase()})`);
   console.log(` > Local Host Dashboard:      ${scheme}://localhost:${PORT}`);
   console.log(` > Local LAN Wi-Fi Endpoint:  ${scheme}://${localIp}:${PORT}`);
+  console.log(` > Transport Layer:           WebRTC P2P UDP + WS Fallback`);
   console.log(` > Max Speakers Per Room:     ${MAX_RECEIVERS_PER_ROOM} (5.1 Array Optimized)`);
-  console.log(' > Multi-Tenant Rooms:       Enabled (Dynamic)');
   console.log('======================================================\n');
 });

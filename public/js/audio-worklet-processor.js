@@ -1,13 +1,13 @@
 /**
- * AudioWorkletProcessor for low-latency, off-main-thread stereo frame capture.
- * Accumulates 5 x 128-sample Web Audio quanta into 640-sample (~13.3ms @ 48kHz) packets.
- * A 640-sample 16-bit PCM packet is 1,296 bytes (including 16-byte header), fitting
- * completely inside a single 1,460-byte TCP MSS / 1,500-byte Wi-Fi MTU frame with zero fragmentation.
+ * AudioWorkletProcessor for ultra-low-latency, off-main-thread stereo frame capture.
+ * Accumulates 3 x 128-sample Web Audio quanta into 384-sample (8.0ms @ 48kHz) frames.
+ * A 384-sample packet is 784 bytes in 16-bit PCM (or 212 bytes in 4:1 ADPCM), fitting
+ * cleanly inside a single WebRTC SCTP/UDP datagram (<1,200 bytes) with zero fragmentation.
  */
 class SonoraCaptureProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.chunkSize = 640; // Exact 5 * 128 Web Audio render quanta; single-MTU in both PCM and ADPCM
+    this.chunkSize = 384; // Exact 3 * 128 Web Audio render quanta (8.0ms @ 48kHz)
     this.poolSize = 8;
     this.leftPool = [];
     this.rightPool = [];
@@ -21,7 +21,6 @@ class SonoraCaptureProcessor extends AudioWorkletProcessor {
   }
 
   process(inputs, outputs) {
-    // Keep outputs completely silent so no un-delayed audio bleeds through
     const output = outputs[0];
     if (output) {
       for (let ch = 0; ch < output.length; ch++) {
@@ -52,7 +51,6 @@ class SonoraCaptureProcessor extends AudioWorkletProcessor {
       offset += toCopy;
 
       if (this.writeIndex >= this.chunkSize) {
-        // Send structured clone from pre-allocated ring pool (zero allocation in audio thread)
         this.port.postMessage({
           left: leftBuf,
           right: rightBuf,

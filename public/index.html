@@ -268,7 +268,7 @@
                 <span class="stage-speaker-label" id="slotLabelSR">Surround R</span>
               </div>
 
-              <div class="stage-coordinate">Buffer: 180ms</div>
+              <div class="stage-coordinate">Buffer: 35ms</div>
             </div>
 
             <!-- Stage Footer -->
@@ -535,9 +535,9 @@
           <div class="settings-row">
             <div>
               <h3>Transport protocol</h3>
-              <p>Local WebSocket with TCP_NODELAY &amp; 24KB anti-bufferbloat cap (max 6 speakers)</p>
+              <p>Direct P2P WebRTC UDP DataChannel (ordered: false, maxRetransmits: 0) + WS fallback</p>
             </div>
-            <span class="mono-badge">Single-MTU Direct</span>
+            <span class="mono-badge">WebRTC P2P UDP</span>
           </div>
 
           <div class="settings-row">
@@ -546,8 +546,8 @@
               <p>Lead buffer delay to absorb network jitter across multiple devices</p>
             </div>
             <div class="slider-group">
-              <input type="range" id="hostDelaySlider" min="60" max="600" step="10" value="180">
-              <span class="mono-value" id="hostDelayValue">180ms</span>
+              <input type="range" id="hostDelaySlider" min="20" max="400" step="5" value="35">
+              <span class="mono-value" id="hostDelayValue">35ms</span>
             </div>
           </div>
 
@@ -557,7 +557,7 @@
               <p>Quick latency calibration for local Wi-Fi vs public cellular networks</p>
             </div>
             <div class="profile-buttons-group">
-              <button type="button" class="stat-chip profile-btn" data-delay="180">Studio Wi-Fi (180ms)</button>
+              <button type="button" class="stat-chip profile-btn" data-delay="35">WebRTC UDP (35ms)</button>
               <button type="button" class="stat-chip profile-btn" data-delay="350">Public Internet (350ms)</button>
               <button type="button" class="stat-chip profile-btn" data-delay="500">High Jitter / 4G (500ms)</button>
             </div>

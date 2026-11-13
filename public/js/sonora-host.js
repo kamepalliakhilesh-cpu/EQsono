@@ -1,7 +1,7 @@
 /**
  * sonora. - Master Host Studio Application Controller
- * Coordinates audio capture, clock sync, adaptive spatial surround,
- * soundstage layout visualizer, device rack, and modal dialogues.
+ * Coordinates audio capture, clock sync, Direct Peer-to-Peer WebRTC UDP DataChannels
+ * (`ordered: false, maxRetransmits: 0`), adaptive spatial surround, and device rack.
  */
 
 (function () {
@@ -24,6 +24,9 @@
   let lastRenderSignature = '';
   const overviewRowNodes = new Map();
   const manageRowNodes = new Map();
+
+  // Direct P2P WebRTC UDP Peer Connections: deviceId -> { pc, dc, iceQueue }
+  const rtcPeers = new Map();
 
   // Navigation Tabs & Views
   const tabOverview = document.getElementById('tabOverview');
@@ -158,6 +161,114 @@
     }
   }
 
+  // WebRTC P2P UDP DataChannel Management (`ordered: false, maxRetransmits: 0`)
+  function closePeerConnection(deviceId) {
+    const peer = rtcPeers.get(deviceId);
+    if (!peer) return;
+    rtcPeers.delete(deviceId);
+    if (audioEngine) audioEngine.setPeerDataChannel(deviceId, null);
+    try {
+      if (peer.dc) peer.dc.close();
+    } catch (e) {}
+    try {
+      if (peer.pc) peer.pc.close();
+    } catch (e) {}
+  }
+
+  async function ensurePeerConnection(deviceId, channelIndex) {
+    if (typeof RTCPeerConnection === 'undefined') return;
+    if (rtcPeers.has(deviceId)) {
+      const existing = rtcPeers.get(deviceId);
+      if (existing.pc && existing.pc.connectionState !== 'failed' && existing.pc.connectionState !== 'closed') {
+        if (audioEngine) audioEngine.updatePeerChannel(deviceId, channelIndex);
+        return;
+      }
+      closePeerConnection(deviceId);
+    }
+
+    try {
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      });
+
+      // Unordered, unreliable UDP DataChannel (PR-SCTP): zero Head-of-Line blocking
+      const dc = pc.createDataChannel('sonora-audio', {
+        ordered: false,
+        maxRetransmits: 0
+      });
+      dc.binaryType = 'arraybuffer';
+
+      const peerEntry = { pc, dc, iceQueue: [] };
+      rtcPeers.set(deviceId, peerEntry);
+
+      dc.onopen = () => {
+        const dev = connectedDevices.find(d => d.id === deviceId);
+        const ch = dev ? dev.channelIndex : channelIndex;
+        if (audioEngine) audioEngine.setPeerDataChannel(deviceId, dc, ch);
+      };
+
+      dc.onclose = () => {
+        if (audioEngine) audioEngine.setPeerDataChannel(deviceId, null);
+      };
+
+      dc.onerror = () => {
+        if (audioEngine) audioEngine.setPeerDataChannel(deviceId, null);
+      };
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate && ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: 'WEBRTC_SIGNAL',
+            targetDeviceId: deviceId,
+            signal: { candidate: event.candidate }
+          }));
+        }
+      };
+
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+          if (audioEngine) audioEngine.setPeerDataChannel(deviceId, null);
+        }
+      };
+
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'WEBRTC_SIGNAL',
+          targetDeviceId: deviceId,
+          signal: { sdp: pc.localDescription }
+        }));
+      }
+    } catch (err) {
+      console.warn('WebRTC P2P offer creation failed, using WS fallback:', err);
+      closePeerConnection(deviceId);
+    }
+  }
+
+  async function handleWebRtcSignal(fromDeviceId, signal) {
+    const peer = rtcPeers.get(fromDeviceId);
+    if (!peer || !peer.pc || !signal) return;
+    try {
+      if (signal.sdp && signal.sdp.type === 'answer') {
+        await peer.pc.setRemoteDescription(new RTCSessionDescription(signal.sdp));
+        while (peer.iceQueue.length > 0) {
+          const c = peer.iceQueue.shift();
+          await peer.pc.addIceCandidate(new RTCIceCandidate(c));
+        }
+      } else if (signal.candidate) {
+        if (peer.pc.remoteDescription && peer.pc.remoteDescription.type) {
+          await peer.pc.addIceCandidate(new RTCIceCandidate(signal.candidate));
+        } else {
+          peer.iceQueue.push(signal.candidate);
+        }
+      }
+    } catch (err) {
+      console.warn('WebRTC signal handling warning:', err);
+    }
+  }
+
   async function init() {
     if (httpsNoticeBanner && !window.isSecureContext) {
       httpsNoticeBanner.hidden = false;
@@ -257,17 +368,17 @@
     });
 
     hostDelaySlider.addEventListener('input', (e) => {
-      const ms = parseInt(e.target.value);
+      const ms = parseInt(e.target.value, 10);
       hostDelayValue.textContent = `${ms}ms`;
       const stageCoord = document.querySelector('.stage-coordinate');
       if (stageCoord) stageCoord.textContent = `Buffer: ${ms}ms`;
       if (audioEngine) audioEngine.setBroadcastDelay(ms);
-      localStorage.setItem('sonora_buffer_delay', ms);
+      localStorage.setItem('sonora_buffer_delay_v3', String(ms));
     });
 
     document.querySelectorAll('.profile-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        const d = parseInt(btn.dataset.delay);
+        const d = parseInt(btn.dataset.delay, 10);
         if (hostDelaySlider) {
           hostDelaySlider.value = d;
           hostDelaySlider.dispatchEvent(new Event('input'));
@@ -275,9 +386,9 @@
       });
     });
 
-    const savedDelay = localStorage.getItem('sonora_buffer_delay');
+    const savedDelay = localStorage.getItem('sonora_buffer_delay_v3');
     if (savedDelay && hostDelaySlider) {
-      const parsedDelay = Math.max(60, Math.min(600, parseInt(savedDelay, 10) || 180));
+      const parsedDelay = Math.max(20, Math.min(400, parseInt(savedDelay, 10) || 35));
       hostDelaySlider.value = String(parsedDelay);
       hostDelayValue.textContent = `${parsedDelay}ms`;
       const stageCoord = document.querySelector('.stage-coordinate');
@@ -339,8 +450,10 @@
 
         if (msg.type === 'SYNC_PONG') {
           if (ntpSync) ntpSync.handlePong(msg);
+        } else if (msg.type === 'WEBRTC_SIGNAL' && msg.fromDeviceId) {
+          await handleWebRtcSignal(msg.fromDeviceId, msg.signal);
         } else if (msg.type === 'HOST_REGISTERED') {
-          setNetworkStatus('live', isCloudRoom ? 'Cloud relay active' : 'Local network active');
+          setNetworkStatus('live', isCloudRoom ? 'Cloud + P2P UDP active' : 'WebRTC P2P UDP active');
           if (msg.mode && applyModeUi) {
             const serverUiMode = msg.mode === 'DOLBY' ? 'SURROUND' : 'STEREO';
             if (serverUiMode !== currentMode) {
@@ -377,6 +490,11 @@
           Object.keys(deviceDelays).forEach(id => {
             if (!validIds.has(id)) delete deviceDelays[id];
           });
+          for (const peerId of Array.from(rtcPeers.keys())) {
+            if (!validIds.has(peerId)) {
+              closePeerConnection(peerId);
+            }
+          }
 
           connectedDevices = msg.devices.map(dev => {
             if (deviceDelays[dev.id] === undefined && Number.isFinite(dev.delayMs)) {
@@ -414,6 +532,9 @@
           }
           updateDeviceCounts(connectedDevices.length);
           applyAdaptiveSurroundRoles();
+          connectedDevices.forEach(dev => {
+            ensurePeerConnection(dev.id, dev.channelIndex);
+          });
           renderSpeakersUI();
         }
       } catch (e) {
@@ -430,7 +551,7 @@
       if (ev && ev.code === 4001) hostReplaced = true;
       if (!hostReplaced) {
         setNetworkStatus('reconnecting', 'Reconnecting...');
-        setTimeout(setupWebSocket, 2000);
+        setTimeout(setupWebSocket, 1500);
       } else {
         setNetworkStatus('offline', 'Session replaced');
       }
@@ -451,8 +572,8 @@
     audioEngine = new HostAudioEngine(ws, ntpSync);
     audioEngine.setMode(currentMode === 'STEREO' ? 'PARTY' : 'DOLBY');
 
-    const savedDelay = parseInt(localStorage.getItem('sonora_buffer_delay') || '', 10);
-    if (Number.isFinite(savedDelay) && savedDelay >= 60 && savedDelay <= 600) {
+    const savedDelay = parseInt(localStorage.getItem('sonora_buffer_delay_v3') || '', 10);
+    if (Number.isFinite(savedDelay) && savedDelay >= 20 && savedDelay <= 400) {
       audioEngine.setBroadcastDelay(savedDelay);
     }
 
@@ -902,7 +1023,7 @@
 
       isCloudRoom = Boolean(data.isCloud);
       if (ws && ws.readyState === WebSocket.OPEN && !hostReplaced) {
-        setNetworkStatus('live', isCloudRoom ? 'Cloud relay active' : 'Local network active');
+        setNetworkStatus('live', isCloudRoom ? 'Cloud + P2P UDP active' : 'WebRTC P2P UDP active');
       }
 
       if (data.qrCodeDataUrl) {
@@ -999,6 +1120,10 @@
       dev.role = role;
       dev.channelIndex = chIdx;
       dev.color = color;
+
+      if (audioEngine) {
+        audioEngine.updatePeerChannel(dev.id, chIdx);
+      }
 
       if (roleChanged && ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
@@ -1128,7 +1253,7 @@
     }
 
     const signature = `${currentMode}::` + connectedDevices
-      .map(d => `${d.id}|${d.role}|${d.name}`)
+      .map(d => `${d.id}|${d.role}|${d.name}|${Boolean(d.rtcActive)}`)
       .join('~');
 
     if (signature === lastRenderSignature) {
@@ -1155,6 +1280,7 @@
       const num = `${idx + 1}`;
       const roleText = dev.role.replace(/_/g, ' ');
       const savedDelay = deviceDelays[dev.id] || 0;
+      const transportTag = dev.rtcActive ? 'UDP P2P' : 'WS Direct';
 
       const row1 = document.createElement('div');
       row1.className = 'speaker-row';
@@ -1171,7 +1297,7 @@
       rttSpan.className = 'status active dev-rtt';
       rttSpan.style.fontSize = '9px';
       const rttDot = document.createElement('i');
-      const rttText = document.createTextNode(` Live synced (Ping: ${Math.round(dev.rtt || 0)}ms)`);
+      const rttText = document.createTextNode(` ${transportTag} · Ping: ${Math.round(dev.rtt || 0)}ms`);
       rttSpan.append(rttDot, rttText);
       info1.append(name1, rttSpan);
 
@@ -1208,7 +1334,7 @@
       offsetSpan.className = 'dev-offset';
       offsetSpan.style.fontSize = '10px';
       offsetSpan.style.color = 'var(--text-secondary, #93939f)';
-      offsetSpan.textContent = `Clock Offset: ${Math.abs(Math.round(dev.offset || 0))}ms`;
+      offsetSpan.textContent = `${transportTag} · Offset: ${Math.abs(Math.round(dev.offset || 0))}ms`;
       info2.append(name2, offsetSpan);
 
       const select = document.createElement('select');
@@ -1284,14 +1410,15 @@
 
   function updateSpeakerTelemetry() {
     connectedDevices.forEach(dev => {
+      const transportTag = dev.rtcActive ? 'UDP P2P' : 'WS Direct';
       const rttTextNode = overviewRowNodes.get(dev.id);
       if (rttTextNode) {
-        rttTextNode.nodeValue = ` Live synced (Ping: ${Math.round(dev.rtt || 0)}ms)`;
+        rttTextNode.nodeValue = ` ${transportTag} · Ping: ${Math.round(dev.rtt || 0)}ms`;
       }
 
       const offsetEl = manageRowNodes.get(dev.id);
       if (offsetEl) {
-        offsetEl.textContent = `Clock Offset: ${Math.abs(Math.round(dev.offset || 0))}ms`;
+        offsetEl.textContent = `${transportTag} · Offset: ${Math.abs(Math.round(dev.offset || 0))}ms`;
       }
     });
   }
