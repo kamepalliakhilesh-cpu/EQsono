@@ -124,10 +124,10 @@ class SonoraReceiverProcessor extends AudioWorkletProcessor {
     const len = outCh.length;
 
     const ratio = this.streamSampleRate / sampleRate;
-    // Ultra-fast 16ms pre-roll (2 frames of 384 samples)
-    const minPreRollSamples = Math.floor(this.streamSampleRate * 0.016);
-    // Adaptive target buffer: 20ms base + 1.8x measured jitter (clamped to 20ms..65ms) + user speaker delay
-    const adaptiveCushionMs = Math.max(20, Math.min(65, 20 + (this.jitterMs * 1.8))) + this.perSpeakerDelayMs;
+    // Fast 45ms pre-roll (~5 frames) - prevents immediate starvation on Wi-Fi packet jitter
+    const minPreRollSamples = Math.floor(this.streamSampleRate * 0.045);
+    // Adaptive target buffer: 45ms base + 1.8x measured jitter (clamped to 40ms..130ms) + user speaker delay
+    const adaptiveCushionMs = Math.max(40, Math.min(130, 45 + (this.jitterMs * 1.8))) + this.perSpeakerDelayMs;
     const desiredBufferedSamples = Math.floor((adaptiveCushionMs / 1000) * this.streamSampleRate);
 
     if (!this.isPlaying) {
@@ -146,12 +146,14 @@ class SonoraReceiverProcessor extends AudioWorkletProcessor {
     }
 
     const availableSamples = this.writeSamples - this.readSamples;
-    if (availableSamples < len * ratio + 4) {
+    if (availableSamples < len * ratio + 2) {
       for (let i = 0; i < len; i++) {
         this.lastOutSample *= 0.88;
         outCh[i] = this.lastOutSample;
       }
-      this.isPlaying = false;
+      if (availableSamples <= 0) {
+        this.isPlaying = false;
+      }
       return true;
     }
 
@@ -159,8 +161,9 @@ class SonoraReceiverProcessor extends AudioWorkletProcessor {
     const rawErrorMs = (rawErrorSamples / this.streamSampleRate) * 1000;
     this.smoothedErrorMs = (this.smoothedErrorMs * 0.85) + (rawErrorMs * 0.15);
 
-    // Tight anti-lag clamp: if buffer ever exceeds adaptive target by >38ms, skip ahead immediately with crossfade
-    if (this.smoothedErrorMs > 38 || this.smoothedErrorMs < -30) {
+    // Smooth anti-lag clamp: only reset read pointer on large network stalls/disruptions (>130ms or <-80ms)
+    // Allows the PI controller below to smoothly resample without audible clicks, repeats, or stuttering
+    if (this.smoothedErrorMs > 130 || this.smoothedErrorMs < -80) {
       this.readSamples = Math.max(1, this.writeSamples - desiredBufferedSamples);
       this.smoothedErrorMs = 0;
       this.driftIntegral = 0;

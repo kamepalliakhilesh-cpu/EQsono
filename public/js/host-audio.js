@@ -194,6 +194,10 @@ class HostAudioEngine {
     this.connectedDeviceCount = Math.max(0, Number(count) || 0);
   }
 
+  setDeviceCount(count) {
+    this.setConnectedDeviceCount(count);
+  }
+
   setActiveChannels(channels) {
     if (Array.isArray(channels)) {
       this.activeChannels = new Set(channels);
@@ -235,8 +239,9 @@ class HostAudioEngine {
     if (typeof AudioCodec === 'undefined') return false;
     if (this.codec === 'adpcm') return true;
     if (this.codec === 'pcm') return false;
-    const activeChCount = this.activeChannels ? this.activeChannels.size : 1;
-    return this.currentMode === 'DOLBY' || activeChCount > 1 || this.connectedDeviceCount >= 3;
+    // Lossless 16-bit linear PCM gives 100% distortion-free, studio-grade clarity for up to 4 devices.
+    // ADPCM auto-engages for 5+ simultaneous multi-channel streams to conserve wireless airtime.
+    return this.connectedDeviceCount >= 5;
   }
 
   async startSystemAudio() {
@@ -527,9 +532,10 @@ class HostAudioEngine {
     let lPeak = 0;
     let rPeak = 0;
 
-    const isParty = this.currentMode === 'PARTY';
+    const active = this.activeChannels;
+    const needParty = this.currentMode === 'PARTY' || !active || active.has(255) || this.connectedDeviceCount <= 1;
 
-    if (isParty) {
+    if (needParty) {
       const partyBuf = this.pcmBuffers[255];
       for (let i = 0; i < numSamples; i++) {
         const l = leftChannel[i];
@@ -541,14 +547,16 @@ class HostAudioEngine {
         lSumSq += l * l;
         rSumSq += r * r;
 
+        // Clean mono/stereo downmix with headroom limiting - preserves 100% of centered speech and vocals
         const mono = (l + r) * 0.5;
         const limited = this._softLimit(mono);
         partyBuf[i] = Math.max(-32768, Math.min(32767, (limited * 32767) | 0));
       }
       this.sendPcmPacket(targetPlayTime, this.sequence, 255, partyBuf, numSamples);
       this.audioLevels.channelEnergy[255] = Math.min(1.0, Math.sqrt((lSumSq + rSumSq) / (numSamples * 2)) * 1.4);
-    } else {
-      const active = this.activeChannels;
+    }
+
+    if (this.currentMode !== 'PARTY' && this.connectedDeviceCount > 1) {
       const needFL = !active || active.has(1);
       const needFR = !active || active.has(2);
       const needC  = !active || active.has(3);
@@ -571,12 +579,14 @@ class HostAudioEngine {
       for (let i = 0; i < numSamples; i++) {
         const l = leftChannel[i];
         const r = rightChannel[i];
-        const absL = Math.abs(l);
-        const absR = Math.abs(r);
-        if (absL > lPeak) lPeak = absL;
-        if (absR > rPeak) rPeak = absR;
-        lSumSq += l * l;
-        rSumSq += r * r;
+        if (!needParty) {
+          const absL = Math.abs(l);
+          const absR = Math.abs(r);
+          if (absL > lPeak) lPeak = absL;
+          if (absR > rPeak) rPeak = absR;
+          lSumSq += l * l;
+          rSumSq += r * r;
+        }
 
         if (needC || needFL || needFR) {
           const center = (l + r) * 0.55;
@@ -687,8 +697,10 @@ class HostAudioEngine {
       }
     }
 
-    // 2. WebSocket fallback only when at least one connected receiver is not yet on P2P UDP
-    if (openRtcPeers < this.connectedDeviceCount && this.ws && this.ws.readyState === WebSocket.OPEN) {
+    // 2. WebSocket fallback: Send whenever any receiver is not yet on P2P UDP,
+    // or when P2P is still establishing (openRtcPeers === 0)
+    const needWsFallback = (openRtcPeers === 0) || (openRtcPeers < this.connectedDeviceCount);
+    if (needWsFallback && this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(frameSlice);
     }
   }

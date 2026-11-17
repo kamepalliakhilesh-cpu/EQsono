@@ -315,6 +315,13 @@ body {
   position: relative;
   z-index: 2;
   transition: all 150ms var(--ease);
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+.receiver-play:active {
+  transform: scale(0.96);
 }
 
 .receiver-play:hover {

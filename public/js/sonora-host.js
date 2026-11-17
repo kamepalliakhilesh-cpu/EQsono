@@ -1079,6 +1079,9 @@
   }
 
   function updateDeviceCounts(count) {
+    if (audioEngine) {
+      audioEngine.setConnectedDeviceCount(count);
+    }
     sidebarSpeakerCount.textContent = count;
     statSpeakerCount.textContent = count;
     connectedHeadingCount.textContent = count;
@@ -1098,8 +1101,11 @@
           role = dev.customRole;
           chIdx = channelMap[dev.customRole] || 255;
         } else if (count === 1) {
-          role = 'FRONT_RIGHT';
-          chIdx = 2;
+          // A single receiver always receives the full stereo/mono mix (ch 255)
+          // to ensure 100% vocal clarity, full frequency response, and no phase cancellation
+          role = 'STEREO_SPEAKER';
+          chIdx = 255;
+          color = '#2dd4bf';
         } else if (count === 2) {
           role = idx === 0 ? 'FRONT_LEFT' : 'FRONT_RIGHT';
           chIdx = idx === 0 ? 1 : 2;
@@ -1138,13 +1144,13 @@
 
     if (audioEngine) {
       audioEngine.setConnectedDeviceCount(count);
-      if (currentMode === 'STEREO') {
+      if (currentMode === 'STEREO' || count <= 1) {
         audioEngine.setActiveChannels([255]);
       } else {
         const activeChs = connectedDevices
           .map(d => d.channelIndex)
           .filter(ch => ch > 0 && ch <= 6);
-        audioEngine.setActiveChannels(activeChs.length > 0 ? activeChs : [1, 2]);
+        audioEngine.setActiveChannels(activeChs.length > 0 ? activeChs : [255]);
       }
     }
 

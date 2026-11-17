@@ -138,8 +138,8 @@
     render(outCh, speakerDelayMs) {
       const len = outCh.length;
       const ratio = this.streamSampleRate / this.contextSampleRate;
-      const minPreRollSamples = Math.floor(this.streamSampleRate * 0.016); // 16ms fast pre-roll
-      const adaptiveCushionMs = Math.max(20, Math.min(65, 20 + (this.jitterMs * 1.8))) + speakerDelayMs;
+      const minPreRollSamples = Math.floor(this.streamSampleRate * 0.045); // 45ms pre-roll
+      const adaptiveCushionMs = Math.max(40, Math.min(130, 45 + (this.jitterMs * 1.8))) + speakerDelayMs;
       const desiredBufferedSamples = Math.floor((adaptiveCushionMs / 1000) * this.streamSampleRate);
 
       if (!this.isPlaying) {
@@ -158,12 +158,14 @@
       }
 
       const availableSamples = this.writeSamples - this.readSamples;
-      if (availableSamples < len * ratio + 4) {
+      if (availableSamples < len * ratio + 2) {
         for (let i = 0; i < len; i++) {
           this.lastOutSample *= 0.88;
           outCh[i] = this.lastOutSample;
         }
-        this.isPlaying = false;
+        if (availableSamples <= 0) {
+          this.isPlaying = false;
+        }
         return;
       }
 
@@ -171,8 +173,8 @@
       const rawErrorMs = (rawErrorSamples / this.streamSampleRate) * 1000;
       this.smoothedErrorMs = (this.smoothedErrorMs * 0.85) + (rawErrorMs * 0.15);
 
-      // Tight anti-lag clamp: never allow buffer lag to exceed adaptive target by >38ms
-      if (this.smoothedErrorMs > 38 || this.smoothedErrorMs < -30) {
+      // Smooth anti-lag clamp: only reset read pointer on large network stalls (>130ms or <-80ms)
+      if (this.smoothedErrorMs > 130 || this.smoothedErrorMs < -80) {
         this.readSamples = Math.max(1, this.writeSamples - desiredBufferedSamples);
         this.smoothedErrorMs = 0;
         this.driftIntegral = 0;
@@ -688,9 +690,26 @@
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
       audioCtx = new AudioContextClass({ latencyHint: 'interactive' });
 
+      // Synchronously unlock audio hardware on mobile WebKit & Chromium before any await
+      try {
+        const silentBuf = audioCtx.createBuffer(1, 1, audioCtx.sampleRate);
+        const silentSrc = audioCtx.createBufferSource();
+        silentSrc.buffer = silentBuf;
+        silentSrc.connect(audioCtx.destination);
+        silentSrc.start(0);
+      } catch (e) {}
+
       if (audioCtx.state === 'suspended') {
         await audioCtx.resume();
       }
+
+      audioCtx.onstatechange = () => {
+        if (audioCtx && audioCtx.state === 'suspended' && isAudioUnlocked && !btnActivateSpeaker.classList.contains('muted')) {
+          audioActivationStatus.textContent = 'Audio paused (Tap to resume)';
+        } else if (audioCtx && audioCtx.state === 'running' && isAudioUnlocked) {
+          updateHostStatusUi(hostOnline);
+        }
+      };
 
       gainNode = audioCtx.createGain();
       const initialVol = speakerVolume ? parseFloat(speakerVolume.value) : 1.0;
@@ -759,7 +778,22 @@
     }
   }
 
-  btnActivateSpeaker.addEventListener('click', unlockAudio);
+  let unlockBusy = false;
+  async function handleActivateTrigger(e) {
+    if (e && e.type === 'touchend') {
+      e.preventDefault();
+    }
+    if (unlockBusy) return;
+    unlockBusy = true;
+    try {
+      await unlockAudio();
+    } finally {
+      unlockBusy = false;
+    }
+  }
+
+  btnActivateSpeaker.addEventListener('touchend', handleActivateTrigger, { passive: false });
+  btnActivateSpeaker.addEventListener('click', handleActivateTrigger);
 
   async function acquireWakeLock() {
     if ('wakeLock' in navigator) {
