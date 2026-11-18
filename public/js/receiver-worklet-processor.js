@@ -91,8 +91,8 @@ class SonoraReceiverProcessor extends AudioWorkletProcessor {
       if (seqDelta === 0 || seqDelta > 60000) {
         return; // Ignore duplicate or late out-of-order UDP/WS frame
       }
-      if (seqDelta > 1 && seqDelta <= 4) {
-        // Packet Loss Concealment (PLC): bridge 1-3 lost UDP frames smoothly
+      if (seqDelta > 1 && seqDelta <= 8) {
+        // Packet Loss Concealment (PLC): bridge up to 7 missing frames smoothly with decay
         const missingPackets = seqDelta - 1;
         const missingSamples = missingPackets * numSamples;
         const prevIdx = (this.writeSamples - 1) & this.RING_MASK;
@@ -102,7 +102,8 @@ class SonoraReceiverProcessor extends AudioWorkletProcessor {
           this.ring[(this.writeSamples + m) & this.RING_MASK] = baseVal * decay;
         }
         this.writeSamples += missingSamples;
-      } else if (seqDelta > 4) {
+      } else if (seqDelta > 250) {
+        // Only reset if stream stopped or host disconnected (>2 seconds gap)
         this.resetStream();
       }
     }

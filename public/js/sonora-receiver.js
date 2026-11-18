@@ -110,7 +110,7 @@
         if (seqDelta === 0 || seqDelta > 60000) {
           return;
         }
-        if (seqDelta > 1 && seqDelta <= 4) {
+        if (seqDelta > 1 && seqDelta <= 8) {
           const missingPackets = seqDelta - 1;
           const missingSamples = missingPackets * numSamples;
           const prevIdx = (this.writeSamples - 1) & this.RING_MASK;
@@ -120,7 +120,7 @@
             this.ring[(this.writeSamples + m) & this.RING_MASK] = baseVal * decay;
           }
           this.writeSamples += missingSamples;
-        } else if (seqDelta > 4) {
+        } else if (seqDelta > 250) {
           this.reset();
         }
       }
@@ -531,6 +531,8 @@
     socket.onmessage = async (event) => {
       if (event.data instanceof ArrayBuffer) {
         if (!isAudioUnlocked || !audioCtx) return;
+        // Ignore duplicate WebSocket audio packets when direct P2P WebRTC UDP channel is active
+        if (rtcDataChannel && rtcDataChannel.readyState === 'open') return;
         handleAudioPacket(event.data);
         return;
       }
