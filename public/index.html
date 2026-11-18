@@ -681,19 +681,61 @@
   </dialog>
 
   <!-- Native Modal Dialog: Connection Guide -->
-  <dialog class="app-dialog" id="guideModal" closedby="any" aria-labelledby="guideDialogTitle">
+  <dialog class="app-dialog app-dialog-wide" id="guideModal" closedby="any" aria-labelledby="guideDialogTitle">
     <form method="dialog">
       <button class="modal-close" id="btnCloseGuideModal" type="submit" value="close" aria-label="Close">✕</button>
     </form>
     <h2 id="guideDialogTitle">Connection guide</h2>
-    <p>Follow these steps to turn phones into synchronized wireless speakers:</p>
-    <ol class="guide-steps">
-      <li>Connect the computer and all mobile devices to the same Wi-Fi router (up to 6 phones).</li>
-      <li>Scan the QR code or open the receiver URL on each phone.</li>
-      <li>Tap the speaker activation circle on the phone to enable audio playback.</li>
-      <li>On this host computer, click <strong>Start broadcast</strong> and select the audio to stream.</li>
-      <li>Assign spatial roles in <strong>Speakers</strong> to calibrate surround sound.</li>
-    </ol>
+    <p>Turn up to 6 mobile devices into synchronized low-latency speakers:</p>
+
+    <div class="guide-sections">
+      <!-- Method 1: USB Cable (Studio Clarity / Zero Jitter) -->
+      <div class="guide-card guide-card-highlight">
+        <div class="guide-card-header">
+          <span class="guide-badge-pill">Recommended · Ultra-Low Latency</span>
+          <h4>Method 1: Direct USB Cable (Single or Multi-Phone)</h4>
+        </div>
+        <p class="guide-card-desc">Bypasses Wi-Fi interference completely. Provides &lt;0.8ms latency, 0% packet loss, and zero-buffer studio sound:</p>
+        <ol class="guide-steps">
+          <li>Connect your phone(s) to this computer using USB data cable(s). <em>(For multiple phones, plug into separate USB ports or a powered USB hub)</em>.</li>
+          <li>On each phone, turn on <strong>Settings → Network / Hotspot → USB Tethering: ON</strong>.</li>
+          <li>In the EQsono <strong>Network box</strong>, click the detected <strong>USB Tethering</strong> IP chip to view its QR code and copy the receiver URL.</li>
+          <li>Open that URL on the phone browser, and tap the activation circle to start audio.</li>
+        </ol>
+        <div class="guide-tip-box">
+          <strong>Pro-tip (Android):</strong> With USB Debugging enabled, run <code>adb reverse tcp:3000 tcp:3000</code> in your terminal and simply open <code>http://localhost:3000/receiver</code> directly on every connected phone!
+        </div>
+      </div>
+
+      <!-- Method 2: Shared Local Wi-Fi -->
+      <div class="guide-card">
+        <div class="guide-card-header">
+          <span class="guide-badge-pill">Standard Wireless</span>
+          <h4>Method 2: Shared Local Wi-Fi Router</h4>
+        </div>
+        <p class="guide-card-desc">Convenient wireless setup across any shared home or office network:</p>
+        <ol class="guide-steps">
+          <li>Connect the computer and all mobile phones to the same Wi-Fi router.</li>
+          <li>Click <strong>Connect phone</strong> or scan the QR code displayed on the host dashboard.</li>
+          <li>On each phone screen, tap the large activation circle to enable audio playback.</li>
+          <li>Click <strong>Start broadcast</strong> on the computer to stream system audio, audio files, or synthesizer demo tracks.</li>
+        </ol>
+      </div>
+
+      <!-- Method 3: PC Mobile Hotspot -->
+      <div class="guide-card">
+        <div class="guide-card-header">
+          <span class="guide-badge-pill">Direct Wireless</span>
+          <h4>Method 3: PC Mobile Hotspot (Low-Latency Wi-Fi)</h4>
+        </div>
+        <p class="guide-card-desc">Direct PC-to-phone wireless without going through an external router:</p>
+        <ol class="guide-steps">
+          <li>Turn on <strong>Mobile Hotspot</strong> in Windows Settings (choose <strong>5 GHz</strong> band for best performance).</li>
+          <li>Connect all mobile phones to this computer's hotspot network.</li>
+          <li>Open <code>http://192.168.137.1:3000/receiver</code> on the connected phones.</li>
+        </ol>
+      </div>
+    </div>
   </dialog>
 
   <!-- Non-blocking Host Toast Region -->

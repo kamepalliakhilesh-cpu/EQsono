@@ -1594,7 +1594,7 @@ dialog.app-dialog {
 }
 
 dialog.app-dialog.app-dialog-wide {
-  max-width: 480px;
+  max-width: 520px;
 }
 
 dialog.app-dialog:modal {
@@ -1711,18 +1711,103 @@ dialog.app-dialog::backdrop {
   border-color: var(--line-strong);
 }
 
-.guide-steps {
-  margin: 16px 0 0;
-  padding-left: 20px;
+.guide-sections {
   display: flex;
   flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
+  max-height: 60vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.guide-card {
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-subtle);
+  border-radius: 10px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.guide-card-highlight {
+  border-color: rgba(45, 212, 191, 0.35);
+  background: rgba(45, 212, 191, 0.04);
+}
+
+.guide-card-header {
+  display: flex;
+  align-items: center;
   gap: 10px;
-  font-size: 13px;
+  flex-wrap: wrap;
+}
+
+.guide-card-header h4 {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.guide-card-desc {
+  font-size: 12px;
   color: var(--text-secondary);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.guide-badge-pill {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  border: 1px solid var(--line-subtle);
+}
+
+.guide-card-highlight .guide-badge-pill {
+  background: rgba(45, 212, 191, 0.12);
+  color: var(--accent);
+  border-color: rgba(45, 212, 191, 0.25);
+}
+
+.guide-steps {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  line-height: 1.45;
 }
 
 .guide-steps strong {
   color: var(--text-primary);
+}
+
+.guide-tip-box {
+  margin-top: 4px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px dashed var(--line-subtle);
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.guide-tip-box code {
+  background: var(--surface-raised);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--accent);
 }
 
 /* Drag-and-Drop Ingestion Overlay */
