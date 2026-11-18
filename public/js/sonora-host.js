@@ -279,6 +279,28 @@
       });
     }
 
+    const audioConnectionTipBanner = document.getElementById('audioConnectionTipBanner');
+    const btnTipOpenGuide = document.getElementById('btnTipOpenGuide');
+    const btnDismissTipBanner = document.getElementById('btnDismissTipBanner');
+
+    if (audioConnectionTipBanner) {
+      const dismissed = localStorage.getItem('sonora_hide_conn_tip');
+      if (dismissed === '1') {
+        audioConnectionTipBanner.hidden = true;
+      }
+      if (btnDismissTipBanner) {
+        btnDismissTipBanner.addEventListener('click', () => {
+          audioConnectionTipBanner.hidden = true;
+          localStorage.setItem('sonora_hide_conn_tip', '1');
+        });
+      }
+      if (btnTipOpenGuide) {
+        btnTipOpenGuide.addEventListener('click', () => {
+          openGuide();
+        });
+      }
+    }
+
     setupNavigation();
     setupAudioEngine();
     setupModeToggle();
