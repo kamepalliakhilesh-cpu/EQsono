@@ -92,12 +92,17 @@ class NtpSync {
     }
 
     // Outlier rejection via lowest-25% RTT selection (packets with least Wi-Fi queuing delay)
-    const sortedByRtt = [...this.samples].sort((a, b) => a.rtt - b.rtt);
+    const sortedByRtt = this.samples.toSorted
+      ? this.samples.toSorted((a, b) => a.rtt - b.rtt)
+      : [...this.samples].sort((a, b) => a.rtt - b.rtt);
     const bestCount = Math.max(1, Math.ceil(sortedByRtt.length * 0.30));
     const bestSamples = sortedByRtt.slice(0, bestCount);
 
     // Median offset of best low-RTT samples
-    const sortedOffsets = bestSamples.map(s => s.offset).sort((a, b) => a - b);
+    const offsets = bestSamples.map(s => s.offset);
+    const sortedOffsets = offsets.toSorted
+      ? offsets.toSorted((a, b) => a - b)
+      : offsets.sort((a, b) => a - b);
     const medianOffset = sortedOffsets[Math.floor(sortedOffsets.length / 2)];
 
     const bestAvgRtt = bestSamples.reduce((sum, s) => sum + s.rtt, 0) / bestSamples.length;

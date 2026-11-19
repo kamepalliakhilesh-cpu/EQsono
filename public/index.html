@@ -780,61 +780,304 @@
     </div>
   </dialog>
 
-  <!-- Native Modal Dialog: Connection Guide -->
-  <dialog class="app-dialog app-dialog-wide" id="guideModal" closedby="any" aria-labelledby="guideDialogTitle">
+  <!-- Native Modal Dialog: Connection Guide (Modern Segmented Tabbed UI) -->
+  <dialog class="app-dialog app-dialog-wide guide-dialog-modern" id="guideModal" closedby="any" aria-labelledby="guideDialogTitle">
     <form method="dialog">
       <button class="modal-close" id="btnCloseGuideModal" type="submit" value="close" aria-label="Close">✕</button>
     </form>
-    <h2 id="guideDialogTitle">Connection guide</h2>
-    <p>Turn up to 6 mobile devices into synchronized low-latency speakers:</p>
 
-    <div class="guide-sections">
-      <!-- Method 1: USB Cable (Studio Clarity / Zero Jitter) -->
-      <div class="guide-card guide-card-highlight">
-        <div class="guide-card-header">
-          <span class="guide-badge-pill">Recommended · Ultra-Low Latency</span>
-          <h4>Method 1: Direct USB Cable (Single or Multi-Phone)</h4>
+    <div class="guide-dialog-header">
+      <div class="guide-header-badge">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <circle cx="12" cy="12" r="10"></circle>
+          <path d="M12 16v-4M12 8h.01"></path>
+        </svg>
+        Audio Transport Guide
+      </div>
+      <h2 id="guideDialogTitle">Speaker Connection Guide</h2>
+      <p class="guide-dialog-subtitle">Choose the connection method for your environment to stream synchronized, low-latency audio to up to 6 mobile devices.</p>
+    </div>
+
+    <!-- Segmented Tab Navigation -->
+    <div class="guide-tabs-nav" role="tablist" aria-label="Connection Methods">
+      <button class="guide-tab-btn active" id="tabBtnUsb" type="button" role="tab" aria-selected="true" aria-controls="tabPanelUsb">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <rect x="7" y="2" width="10" height="20" rx="2"></rect>
+          <line x1="11" y1="18" x2="13" y2="18"></line>
+        </svg>
+        <span class="guide-tab-title">Direct USB Cable</span>
+        <span class="guide-tab-pill pill-best">Rank 1 · Lossless</span>
+      </button>
+
+      <button class="guide-tab-btn" id="tabBtnWifi" type="button" role="tab" aria-selected="false" aria-controls="tabPanelWifi">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
+          <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
+          <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+          <line x1="12" y1="20" x2="12.01" y2="20"></line>
+        </svg>
+        <span class="guide-tab-title">Shared Local Wi-Fi</span>
+        <span class="guide-tab-pill">Standard</span>
+      </button>
+
+      <button class="guide-tab-btn" id="tabBtnHotspot" type="button" role="tab" aria-selected="false" aria-controls="tabPanelHotspot">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <circle cx="12" cy="12" r="2"></circle>
+          <path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"></path>
+          <path d="M19.1 4.9C23 8.8 23 15.2 19.1 19.1"></path>
+          <path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"></path>
+          <path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"></path>
+        </svg>
+        <span class="guide-tab-title">Laptop 5GHz Hotspot</span>
+        <span class="guide-tab-pill pill-fast">Direct Wireless</span>
+      </button>
+    </div>
+
+    <!-- Tab 1: Direct USB Cable -->
+    <div class="guide-tab-panel active" id="tabPanelUsb" role="tabpanel" aria-labelledby="tabBtnUsb">
+      <div class="guide-metrics-banner">
+        <div class="metric-item">
+          <span class="metric-label">Transport Latency</span>
+          <span class="metric-val highlight">&lt; 0.8 ms</span>
         </div>
-        <p class="guide-card-desc">Bypasses Wi-Fi interference completely. Provides &lt;0.8ms latency, 0% packet loss, and zero-buffer studio sound:</p>
-        <ol class="guide-steps">
-          <li>Connect your phone(s) to this computer using USB data cable(s). <em>(For multiple phones, plug into separate USB ports or a powered USB hub)</em>.</li>
-          <li>On each phone, turn on <strong>Settings → Network / Hotspot → USB Tethering: ON</strong>.</li>
-          <li>In the EQsono <strong>Network box</strong>, click the detected <strong>USB Tethering</strong> IP chip to view its QR code and copy the receiver URL.</li>
-          <li>Open that URL on the phone browser, and tap the activation circle to start audio.</li>
-        </ol>
-        <div class="guide-tip-box">
-          <strong>Pro-tip (Android):</strong> With USB Debugging enabled, run <code>adb reverse tcp:3000 tcp:3000</code> in your terminal and simply open <code>http://localhost:3000/receiver</code> directly on every connected phone!
+        <div class="metric-divider"></div>
+        <div class="metric-item">
+          <span class="metric-label">Jitter / Variance</span>
+          <span class="metric-val">0.0 ms</span>
+        </div>
+        <div class="metric-divider"></div>
+        <div class="metric-item">
+          <span class="metric-label">Packet Loss</span>
+          <span class="metric-val">0.0%</span>
+        </div>
+        <div class="metric-divider"></div>
+        <div class="metric-item">
+          <span class="metric-label">Audio Quality</span>
+          <span class="metric-val highlight">Lossless 16-bit PCM</span>
         </div>
       </div>
 
-      <!-- Method 2: Shared Local Wi-Fi -->
-      <div class="guide-card">
-        <div class="guide-card-header">
-          <span class="guide-badge-pill">Standard Wireless</span>
-          <h4>Method 2: Shared Local Wi-Fi Router</h4>
+      <div class="guide-steps-grid">
+        <div class="step-card">
+          <div class="step-number">1</div>
+          <div class="step-content">
+            <h4>Connect via USB Data Cable</h4>
+            <p>Plug phone(s) into your computer's USB ports. For connecting multiple phones simultaneously, use a <strong>powered USB hub</strong> or individual USB ports.</p>
+          </div>
         </div>
-        <p class="guide-card-desc">Convenient wireless setup across any shared home or office network:</p>
-        <ol class="guide-steps">
-          <li>Connect the computer and all mobile phones to the same Wi-Fi router.</li>
-          <li>Click <strong>Connect phone</strong> or scan the QR code displayed on the host dashboard.</li>
-          <li>On each phone screen, tap the large activation circle to enable audio playback.</li>
-          <li>Click <strong>Start broadcast</strong> on the computer to stream system audio, audio files, or synthesizer demo tracks.</li>
-        </ol>
+
+        <div class="step-card">
+          <div class="step-number">2</div>
+          <div class="step-content">
+            <h4>Enable USB Tethering on Phone</h4>
+            <p>Open <strong>Settings → Hotspot &amp; Tethering</strong> (or <em>Connections → Mobile Hotspot and Tethering</em>) and toggle <strong>USB Tethering: ON</strong>.</p>
+          </div>
+        </div>
+
+        <div class="step-card">
+          <div class="step-number">3</div>
+          <div class="step-content">
+            <h4>Select USB Tethering IP on Dashboard</h4>
+            <p>On the host dashboard, look at the <strong>Network box</strong>. Click the detected <code>USB Tethering</code> IP chip to generate its direct QR code and receiver link.</p>
+          </div>
+        </div>
+
+        <div class="step-card">
+          <div class="step-number">4</div>
+          <div class="step-content">
+            <h4>Open Receiver &amp; Tap to Activate</h4>
+            <p>Scan the QR code with your phone or open the link in Chrome/Safari. Tap the large center circle to unlock audio hardware and start synchronized playback.</p>
+          </div>
+        </div>
       </div>
 
-      <!-- Method 3: PC Mobile Hotspot -->
-      <div class="guide-card">
-        <div class="guide-card-header">
-          <span class="guide-badge-pill">Direct Wireless</span>
-          <h4>Method 3: PC Mobile Hotspot (Low-Latency Wi-Fi)</h4>
+      <div class="guide-pro-snippet">
+        <div class="snippet-header">
+          <span class="snippet-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <polyline points="4 17 10 11 4 5"></polyline>
+              <line x1="12" y1="19" x2="20" y2="19"></line>
+            </svg>
+            Developer Fast Lane (Android ADB)
+          </span>
+          <span class="snippet-badge">Zero Config IP</span>
         </div>
-        <p class="guide-card-desc">Direct PC-to-phone wireless without going through an external router:</p>
-        <ol class="guide-steps">
-          <li>Turn on <strong>Mobile Hotspot</strong> in Windows Settings (choose <strong>5 GHz</strong> band for best performance).</li>
-          <li>Connect all mobile phones to this computer's hotspot network.</li>
-          <li>Open <code>http://192.168.137.1:3000/receiver</code> on the connected phones.</li>
-        </ol>
+        <p class="snippet-desc">With USB Debugging enabled, map port 3000 to the phone directly over USB so <code>http://localhost:3000/receiver</code> opens on every device:</p>
+        <div class="snippet-code-row">
+          <code>adb reverse tcp:3000 tcp:3000</code>
+          <button class="btn-copy-snippet" id="btnCopyAdbCmd" type="button" aria-label="Copy ADB command">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+            <span>Copy</span>
+          </button>
+        </div>
       </div>
+    </div>
+
+    <!-- Tab 2: Shared Local Wi-Fi -->
+    <div class="guide-tab-panel" id="tabPanelWifi" role="tabpanel" aria-labelledby="tabBtnWifi" hidden>
+      <div class="guide-metrics-banner">
+        <div class="metric-item">
+          <span class="metric-label">Transport Latency</span>
+          <span class="metric-val">15 – 35 ms</span>
+        </div>
+        <div class="metric-divider"></div>
+        <div class="metric-item">
+          <span class="metric-label">Physical Range</span>
+          <span class="metric-val">Entire Wi-Fi Range</span>
+        </div>
+        <div class="metric-divider"></div>
+        <div class="metric-item">
+          <span class="metric-label">Cable Requirement</span>
+          <span class="metric-val highlight">100% Wireless</span>
+        </div>
+        <div class="metric-divider"></div>
+        <div class="metric-item">
+          <span class="metric-label">Device Setup</span>
+          <span class="metric-val">Instant via QR</span>
+        </div>
+      </div>
+
+      <div class="guide-steps-grid">
+        <div class="step-card">
+          <div class="step-number">1</div>
+          <div class="step-content">
+            <h4>Connect to Same Wi-Fi Network</h4>
+            <p>Ensure this computer and all mobile devices are connected to the same Wi-Fi router (prefer 5 GHz over 2.4 GHz for lower radio congestion).</p>
+          </div>
+        </div>
+
+        <div class="step-card">
+          <div class="step-number">2</div>
+          <div class="step-content">
+            <h4>Scan Dashboard QR Code</h4>
+            <p>Click <strong>Connect phone</strong> or point your phone camera at the QR code displayed in the sidebar to open the receiver screen.</p>
+          </div>
+        </div>
+
+        <div class="step-card">
+          <div class="step-number">3</div>
+          <div class="step-content">
+            <h4>Tap to Unlock Web Audio</h4>
+            <p>On each phone screen, tap the center activation circle. The status changes to <em>Active</em> with a green glow.</p>
+          </div>
+        </div>
+
+        <div class="step-card">
+          <div class="step-number">4</div>
+          <div class="step-content">
+            <h4>Start Audio Broadcast</h4>
+            <p>Click <strong>Start broadcast</strong> to stream system audio, synthetic soundscapes, or drag and drop local audio files (MP3, WAV, FLAC).</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="guide-info-banner">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <circle cx="12" cy="12" r="10"></circle>
+          <line x1="12" y1="16" x2="12" y2="12"></line>
+          <line x1="12" y1="8" x2="12.01" y2="8"></line>
+        </svg>
+        <span><strong>Tip for noisy Wi-Fi:</strong> If you experience audio drops on a crowded home router, switch your router channel to 5 GHz or use <em>Laptop 5GHz Hotspot</em>.</span>
+      </div>
+    </div>
+
+    <!-- Tab 3: Laptop 5GHz Hotspot -->
+    <div class="guide-tab-panel" id="tabPanelHotspot" role="tabpanel" aria-labelledby="tabBtnHotspot" hidden>
+      <div class="guide-metrics-banner">
+        <div class="metric-item">
+          <span class="metric-label">Transport Latency</span>
+          <span class="metric-val highlight">2 – 6 ms</span>
+        </div>
+        <div class="metric-divider"></div>
+        <div class="metric-item">
+          <span class="metric-label">Router Dependency</span>
+          <span class="metric-val highlight">Bypasses Router (0 Drops)</span>
+        </div>
+        <div class="metric-divider"></div>
+        <div class="metric-item">
+          <span class="metric-label">Airtime Band</span>
+          <span class="metric-val">5 GHz Direct</span>
+        </div>
+        <div class="metric-divider"></div>
+        <div class="metric-item">
+          <span class="metric-label">Max Speakers</span>
+          <span class="metric-val">Up to 6 Phones</span>
+        </div>
+      </div>
+
+      <div class="guide-steps-grid">
+        <div class="step-card">
+          <div class="step-number">1</div>
+          <div class="step-content">
+            <h4>Turn on Windows Mobile Hotspot</h4>
+            <p>Open <strong>Windows Settings → Network &amp; Internet → Mobile Hotspot</strong>. Turn it <strong>ON</strong> and verify the Network band is set to <strong>5 GHz</strong>.</p>
+          </div>
+        </div>
+
+        <div class="step-card">
+          <div class="step-number">2</div>
+          <div class="step-content">
+            <h4>Connect Phones to Laptop Hotspot</h4>
+            <p>On your mobile devices, join the Wi-Fi network name and password shown in your laptop's Mobile Hotspot settings.</p>
+          </div>
+        </div>
+
+        <div class="step-card">
+          <div class="step-number">3</div>
+          <div class="step-content">
+            <h4>Open Default Hotspot Address</h4>
+            <p>In the phone browser, open <code>http://192.168.137.1:3000/receiver</code> (or click the <code>Mobile Hotspot</code> chip in the EQsono network box).</p>
+          </div>
+        </div>
+
+        <div class="step-card">
+          <div class="step-number">4</div>
+          <div class="step-content">
+            <h4>Tap Activation Circle</h4>
+            <p>Tap the activation button on each phone. You get crystal-clear wireless audio with zero buffering and ultra-low jitter.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="guide-pro-snippet">
+        <div class="snippet-header">
+          <span class="snippet-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+            </svg>
+            Standard Windows Hotspot URL
+          </span>
+          <span class="snippet-badge">Hotspot IP</span>
+        </div>
+        <div class="snippet-code-row">
+          <code id="hotspotUrlCode">http://192.168.137.1:3000/receiver</code>
+          <button class="btn-copy-snippet" id="btnCopyHotspotUrl" type="button" aria-label="Copy Hotspot URL">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+            </svg>
+            <span>Copy</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Footer -->
+    <div class="guide-dialog-footer">
+      <div class="footer-hint">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
+          <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
+        </svg>
+        <span>Supports automatic 5.1 surround spatial mixing when 2 or more devices are active.</span>
+      </div>
+      <button class="primary-action-button" id="btnGuideGotIt" type="button">
+        <span>Close guide</span>
+      </button>
     </div>
   </dialog>
 

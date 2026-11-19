@@ -168,10 +168,21 @@
     rtcPeers.delete(deviceId);
     if (audioEngine) audioEngine.setPeerDataChannel(deviceId, null);
     try {
-      if (peer.dc) peer.dc.close();
+      if (peer.dc) {
+        peer.dc.onopen = null;
+        peer.dc.onclose = null;
+        peer.dc.onerror = null;
+        peer.dc.onmessage = null;
+        peer.dc.close();
+      }
     } catch (e) {}
     try {
-      if (peer.pc) peer.pc.close();
+      if (peer.pc) {
+        peer.pc.onicecandidate = null;
+        peer.pc.onconnectionstatechange = null;
+        peer.pc.ondatachannel = null;
+        peer.pc.close();
+      }
     } catch (e) {}
   }
 
@@ -208,11 +219,11 @@
       };
 
       dc.onclose = () => {
-        if (audioEngine) audioEngine.setPeerDataChannel(deviceId, null);
+        closePeerConnection(deviceId);
       };
 
       dc.onerror = () => {
-        if (audioEngine) audioEngine.setPeerDataChannel(deviceId, null);
+        closePeerConnection(deviceId);
       };
 
       pc.onicecandidate = (event) => {
@@ -227,7 +238,7 @@
 
       pc.onconnectionstatechange = () => {
         if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
-          if (audioEngine) audioEngine.setPeerDataChannel(deviceId, null);
+          closePeerConnection(deviceId);
         }
       };
 
@@ -983,6 +994,77 @@
     btnOpenGuide.addEventListener('click', openGuide);
     btnOpenGoodToKnow.addEventListener('click', openGuide);
     btnCloseGuideModal.addEventListener('click', () => closeDialog(guideModal));
+
+    // Modern Segmented Connection Guide Interactions
+    const btnGuideGotIt = document.getElementById('btnGuideGotIt');
+    if (btnGuideGotIt) {
+      btnGuideGotIt.addEventListener('click', () => closeDialog(guideModal));
+    }
+
+    const guideTabs = [
+      { btn: document.getElementById('tabBtnUsb'), panel: document.getElementById('tabPanelUsb') },
+      { btn: document.getElementById('tabBtnWifi'), panel: document.getElementById('tabPanelWifi') },
+      { btn: document.getElementById('tabBtnHotspot'), panel: document.getElementById('tabPanelHotspot') }
+    ];
+
+    function selectGuideTab(targetIndex) {
+      guideTabs.forEach((t, idx) => {
+        if (!t.btn || !t.panel) return;
+        const isSelected = idx === targetIndex;
+        t.btn.classList.toggle('active', isSelected);
+        t.btn.setAttribute('aria-selected', isSelected ? 'true' : 'false');
+        t.panel.classList.toggle('active', isSelected);
+        t.panel.hidden = !isSelected;
+      });
+    }
+
+    guideTabs.forEach((t, idx) => {
+      if (!t.btn) return;
+      t.btn.addEventListener('click', () => selectGuideTab(idx));
+    });
+
+    const setupCopySnippetBtn = (buttonId, textGetter, successMsg) => {
+      const btn = document.getElementById(buttonId);
+      if (!btn) return;
+      btn.addEventListener('click', async () => {
+        const text = typeof textGetter === 'function' ? textGetter() : textGetter;
+        try {
+          if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(text);
+          } else {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            document.body.removeChild(ta);
+          }
+          const origHtml = btn.innerHTML;
+          btn.classList.add('copied');
+          btn.innerHTML = `
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+            <span>Copied!</span>
+          `;
+          showToast(successMsg || 'Copied to clipboard');
+          setTimeout(() => {
+            btn.classList.remove('copied');
+            btn.innerHTML = origHtml;
+          }, 2000);
+        } catch (e) {
+          showToast('Failed to copy to clipboard');
+        }
+      });
+    };
+
+    setupCopySnippetBtn('btnCopyAdbCmd', 'adb reverse tcp:3000 tcp:3000', 'ADB command copied to clipboard!');
+    setupCopySnippetBtn('btnCopyHotspotUrl', () => {
+      const codeEl = document.getElementById('hotspotUrlCode');
+      return (codeEl && codeEl.textContent) ? codeEl.textContent.trim() : 'http://192.168.137.1:3000/receiver';
+    }, 'Hotspot receiver URL copied to clipboard!');
 
     // Best Audio Output Tip (Square Shape with Curved Edges Overlay)
     const bestAudioTipModal = document.getElementById('bestAudioTipModal');

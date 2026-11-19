@@ -297,6 +297,7 @@ function cleanupSocketMembership(ws) {
   if (!ws.roomKey) return;
   const oldRoom = rooms.get(ws.roomKey);
   if (oldRoom) {
+    oldRoom.lastActivity = Date.now();
     if (ws.clientType === 'HOST' && oldRoom.hostSocket === ws) {
       oldRoom.hostSocket = null;
       broadcastHostStatus(oldRoom, false);
@@ -690,12 +691,19 @@ const interval = setInterval(() => {
   });
 }, 15000);
 
-// Inactive room cleanup
+// Inactive room cleanup & dead socket pruning
 const cleanupInterval = setInterval(() => {
   const now = Date.now();
   for (const [key, room] of rooms.entries()) {
-    const isInactive = !room.hostSocket && room.receivers.size === 0;
-    if (isInactive && now - room.lastActivity > 30 * 60 * 1000) {
+    // Prune stale/closed receiver sockets
+    for (const [devId, dev] of room.receivers.entries()) {
+      if (!dev.ws || dev.ws.readyState !== WebSocket.OPEN) {
+        room.receivers.delete(devId);
+      }
+    }
+    const hasActiveHost = Boolean(room.hostSocket && room.hostSocket.readyState === WebSocket.OPEN);
+    const isInactive = !hasActiveHost && room.receivers.size === 0;
+    if ((isInactive && now - room.lastActivity > 20 * 60 * 1000) || (now - room.lastActivity > 4 * 3600 * 1000)) {
       rooms.delete(key);
     }
   }

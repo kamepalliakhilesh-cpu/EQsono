@@ -2003,103 +2003,425 @@ dialog.app-dialog::backdrop {
   border-color: var(--line-strong);
 }
 
-.guide-sections {
+/* Modern Segmented Connection Guide Dialog */
+.guide-dialog-modern {
+  max-width: 680px;
+  width: 94%;
+  padding: 24px;
+  border-radius: 20px;
+  background: var(--surface-elevated, #161619);
+  border: 1px solid var(--line-strong, #2c2d33);
+  box-shadow: 0 28px 72px rgba(0, 0, 0, 0.75);
+}
+
+.guide-dialog-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.guide-header-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: rgba(45, 212, 191, 0.10);
+  border: 1px solid rgba(45, 212, 191, 0.25);
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+.guide-dialog-header h2 {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 4px 0 2px;
+  letter-spacing: -0.02em;
+}
+
+.guide-dialog-subtitle {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+  margin: 0;
+}
+
+/* Segmented Tab Navigation */
+.guide-tabs-nav {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.35);
+  padding: 5px;
+  border-radius: 12px;
+  border: 1px solid var(--line-subtle);
+  margin: 16px 0 14px;
+}
+
+.guide-tab-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 9px 8px;
+  border-radius: 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+  text-align: center;
+}
+
+.guide-tab-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.guide-tab-btn.active {
+  background: rgba(45, 212, 191, 0.12);
+  border-color: rgba(45, 212, 191, 0.40);
+  color: #ffffff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.guide-tab-btn svg {
+  color: var(--text-secondary);
+  transition: color 0.15s ease;
+}
+
+.guide-tab-btn.active svg {
+  color: var(--accent);
+}
+
+.guide-tab-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.guide-tab-pill {
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface-raised);
+  color: var(--text-tertiary);
+  border: 1px solid var(--line-subtle);
+}
+
+.guide-tab-pill.pill-best {
+  background: rgba(45, 212, 191, 0.16);
+  color: var(--accent);
+  border-color: rgba(45, 212, 191, 0.30);
+}
+
+.guide-tab-pill.pill-fast {
+  background: rgba(56, 189, 248, 0.14);
+  color: #38bdf8;
+  border-color: rgba(56, 189, 248, 0.28);
+}
+
+/* Tab Panels */
+.guide-tab-panel {
+  display: none;
+}
+
+.guide-tab-panel.active {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  margin-top: 14px;
-  max-height: 60vh;
-  overflow-y: auto;
-  padding-right: 4px;
+  animation: guideFade 0.18s ease-out;
 }
 
-.guide-card {
+@keyframes guideFade {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Performance Metric Banner */
+.guide-metrics-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
   background: var(--surface-sunken);
   border: 1px solid var(--line-subtle);
   border-radius: 10px;
-  padding: 14px;
+  padding: 9px 12px;
+}
+
+.metric-item {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-}
-
-.guide-card-highlight {
-  border-color: rgba(45, 212, 191, 0.35);
-  background: rgba(45, 212, 191, 0.04);
-}
-
-.guide-card-header {
-  display: flex;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
+  gap: 2px;
 }
 
-.guide-card-header h4 {
-  font-size: 13.5px;
+.metric-label {
+  font-size: 10px;
   font-weight: 500;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.metric-val {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-family: var(--font-mono, monospace);
+}
+
+.metric-val.highlight {
+  color: var(--accent);
+}
+
+.metric-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--line-subtle);
+}
+
+/* Steps 2-Column Grid */
+.guide-steps-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.step-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-subtle);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.step-number {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: rgba(45, 212, 191, 0.12);
+  border: 1px solid rgba(45, 212, 191, 0.28);
+  color: var(--accent);
+  font-size: 11.5px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.step-content {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.step-content h4 {
+  font-size: 12.5px;
+  font-weight: 600;
   color: var(--text-primary);
   margin: 0;
 }
 
-.guide-card-desc {
-  font-size: 12px;
+.step-content p {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  margin: 0;
+  line-height: 1.42;
+}
+
+.step-content strong {
+  color: var(--text-primary);
+}
+
+.step-content code {
+  background: var(--surface-raised);
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  color: var(--accent);
+  font-family: var(--font-mono, monospace);
+}
+
+/* Quick Pro-Snippet & Code Row */
+.guide-pro-snippet {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px dashed var(--line-strong);
+  border-radius: 10px;
+  padding: 11px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.snippet-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.snippet-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.snippet-title svg {
+  color: var(--accent);
+}
+
+.snippet-badge {
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  background: var(--surface-raised);
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--line-subtle);
+}
+
+.snippet-desc {
+  font-size: 11.5px;
   color: var(--text-secondary);
   margin: 0;
   line-height: 1.4;
 }
 
-.guide-badge-pill {
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  padding: 2px 7px;
-  border-radius: 4px;
+.snippet-desc code {
   background: var(--surface-raised);
-  color: var(--text-secondary);
-  border: 1px solid var(--line-subtle);
-}
-
-.guide-card-highlight .guide-badge-pill {
-  background: rgba(45, 212, 191, 0.12);
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 11px;
   color: var(--accent);
-  border-color: rgba(45, 212, 191, 0.25);
+  font-family: var(--font-mono, monospace);
 }
 
-.guide-steps {
-  margin: 4px 0 0;
-  padding-left: 18px;
+.snippet-code-row {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  font-size: 12.5px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-subtle);
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+.snippet-code-row code {
+  font-family: var(--font-mono, monospace);
+  font-size: 12px;
+  color: var(--accent);
+  overflow-x: auto;
+}
+
+.btn-copy-snippet {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 5px;
+  background: rgba(45, 212, 191, 0.12);
+  border: 1px solid rgba(45, 212, 191, 0.30);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+  font-family: inherit;
+}
+
+.btn-copy-snippet:hover {
+  background: rgba(45, 212, 191, 0.22);
+  border-color: var(--accent);
+}
+
+.btn-copy-snippet.copied {
+  background: #10b981;
+  color: #ffffff;
+  border-color: #10b981;
+}
+
+/* Info Banner */
+.guide-info-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--line-subtle);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 11.5px;
   color: var(--text-secondary);
   line-height: 1.45;
 }
 
-.guide-steps strong {
-  color: var(--text-primary);
-}
-
-.guide-tip-box {
-  margin-top: 4px;
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px dashed var(--line-subtle);
-  font-size: 11.5px;
-  color: var(--text-secondary);
-  line-height: 1.4;
-}
-
-.guide-tip-box code {
-  background: var(--surface-raised);
-  padding: 1px 5px;
-  border-radius: 4px;
-  font-family: var(--font-mono, monospace);
-  font-size: 11px;
+.guide-info-banner svg {
   color: var(--accent);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* Dialog Footer */
+.guide-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line-subtle);
+}
+
+.footer-hint {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+}
+
+.footer-hint svg {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+@media (max-width: 600px) {
+  .guide-steps-grid {
+    grid-template-columns: 1fr;
+  }
+  .guide-tabs-nav {
+    grid-template-columns: 1fr;
+  }
+  .guide-metrics-banner {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .metric-divider {
+    display: none;
+  }
+  .guide-dialog-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 
 /* Drag-and-Drop Ingestion Overlay */
