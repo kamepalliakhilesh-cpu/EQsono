@@ -123,6 +123,40 @@
   const btnTestSound = document.getElementById('btnTestSound');
   const btnCloseTestModal = document.getElementById('btnCloseTestModal');
 
+  // Best Audio Output Tip (Square Shape with Curved Edges Overlay)
+  const bestAudioTipModal = document.getElementById('bestAudioTipModal');
+  const btnCloseAudioTipModal = document.getElementById('btnCloseAudioTipModal');
+  const btnGotItAudioTip = document.getElementById('btnGotItAudioTip');
+  const chkDontShowFidelityOverlay = document.getElementById('chkDontShowFidelityOverlay');
+  const btnOpenBestAudioOverlay = document.getElementById('btnOpenBestAudioOverlay');
+
+  // Universal Dialog Open/Close Helpers (Accessible across entire script)
+  function openDialog(dlg) {
+    if (!dlg) return;
+    try {
+      if (typeof dlg.showModal === 'function') {
+        if (!dlg.open) dlg.showModal();
+      } else {
+        dlg.setAttribute('open', '');
+      }
+    } catch (e) {
+      dlg.setAttribute('open', '');
+    }
+  }
+
+  function closeDialog(dlg) {
+    if (!dlg) return;
+    try {
+      if (typeof dlg.close === 'function') {
+        if (dlg.open) dlg.close();
+      }
+    } catch (e) {}
+    dlg.removeAttribute('open');
+  }
+
+  const openGuide = () => openDialog(guideModal);
+  const openAudioTip = () => openDialog(bestAudioTipModal);
+
   // Speakers Lists
   const overviewEmptySpeakers = document.getElementById('overviewEmptySpeakers');
   const overviewSpeakersList = document.getElementById('overviewSpeakersList');
@@ -936,47 +970,63 @@
   }
 
   function setupModals() {
-    const openDialog = (dlg) => {
-      if (!dlg) return;
-      if (typeof dlg.showModal === 'function') {
-        if (!dlg.open) dlg.showModal();
-      } else {
-        dlg.setAttribute('open', '');
-      }
-    };
+    // Backdrop click dismiss for all native dialogs
+    document.querySelectorAll('dialog').forEach(dlg => {
+      dlg.addEventListener('click', (e) => {
+        if (e.target === dlg) {
+          const r = dlg.getBoundingClientRect();
+          const inDialog = (
+            r.top <= e.clientY && e.clientY <= r.bottom &&
+            r.left <= e.clientX && e.clientX <= r.right
+          );
+          if (!inDialog) {
+            closeDialog(dlg);
+          }
+        }
+      });
+      dlg.addEventListener('cancel', (e) => {
+        e.preventDefault();
+        closeDialog(dlg);
+      });
+    });
 
-    const closeDialog = (dlg) => {
-      if (!dlg) return;
-      if (typeof dlg.close === 'function') {
-        if (dlg.open) dlg.close();
-      } else {
-        dlg.removeAttribute('open');
-      }
-    };
+    // Form submit interceptor for native <form method="dialog">
+    document.querySelectorAll('dialog > form[method="dialog"]').forEach(form => {
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const dlg = form.closest('dialog');
+        if (dlg) closeDialog(dlg);
+      });
+    });
 
-    if (!('closedBy' in HTMLDialogElement.prototype)) {
-      const outside = (e, dialog) => {
-        const r = dialog.getBoundingClientRect();
-        return e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom;
-      };
-      for (const dialog of document.querySelectorAll('dialog[closedby="any"]')) {
-        let pressedOutside = false;
-        dialog.addEventListener('pointerdown', (e) => { pressedOutside = outside(e, dialog); });
-        dialog.addEventListener('pointerup', (e) => {
-          if (pressedOutside && outside(e, dialog)) closeDialog(dialog);
-        });
+    // Global Escape key dismiss
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        document.querySelectorAll('dialog[open]').forEach(dlg => closeDialog(dlg));
       }
+    });
+
+    // Add Speaker modal open/close
+    const openAddModal = () => openDialog(addSpeakerModal);
+    if (btnAddSpeaker) btnAddSpeaker.addEventListener('click', openAddModal);
+    if (btnAddSpeakerFromSpeakers) btnAddSpeakerFromSpeakers.addEventListener('click', openAddModal);
+    if (btnConnectPhoneOverview) btnConnectPhoneOverview.addEventListener('click', openAddModal);
+    if (btnConnectPhoneManage) btnConnectPhoneManage.addEventListener('click', openAddModal);
+    if (btnCloseAddModal) {
+      btnCloseAddModal.addEventListener('click', (e) => {
+        e.preventDefault();
+        closeDialog(addSpeakerModal);
+      });
     }
 
-    const openAddModal = () => openDialog(addSpeakerModal);
-    btnAddSpeaker.addEventListener('click', openAddModal);
-    btnAddSpeakerFromSpeakers.addEventListener('click', openAddModal);
-    btnConnectPhoneOverview.addEventListener('click', openAddModal);
-    btnConnectPhoneManage.addEventListener('click', openAddModal);
-    btnCloseAddModal.addEventListener('click', () => closeDialog(addSpeakerModal));
-
-    btnTestSound.addEventListener('click', () => openDialog(testSoundModal));
-    btnCloseTestModal.addEventListener('click', () => closeDialog(testSoundModal));
+    // Sound Test modal open/close
+    if (btnTestSound) btnTestSound.addEventListener('click', () => openDialog(testSoundModal));
+    if (btnCloseTestModal) {
+      btnCloseTestModal.addEventListener('click', (e) => {
+        e.preventDefault();
+        closeDialog(testSoundModal);
+      });
+    }
 
     document.querySelectorAll('.ch-test-btn').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -990,15 +1040,23 @@
       });
     });
 
-    const openGuide = () => openDialog(guideModal);
-    btnOpenGuide.addEventListener('click', openGuide);
-    btnOpenGoodToKnow.addEventListener('click', openGuide);
-    btnCloseGuideModal.addEventListener('click', () => closeDialog(guideModal));
+    // Connection Guide modal open/close
+    if (btnOpenGuide) btnOpenGuide.addEventListener('click', openGuide);
+    if (btnOpenGoodToKnow) btnOpenGoodToKnow.addEventListener('click', openGuide);
+    if (btnCloseGuideModal) {
+      btnCloseGuideModal.addEventListener('click', (e) => {
+        e.preventDefault();
+        closeDialog(guideModal);
+      });
+    }
 
     // Modern Segmented Connection Guide Interactions
     const btnGuideGotIt = document.getElementById('btnGuideGotIt');
     if (btnGuideGotIt) {
-      btnGuideGotIt.addEventListener('click', () => closeDialog(guideModal));
+      btnGuideGotIt.addEventListener('click', (e) => {
+        e.preventDefault();
+        closeDialog(guideModal);
+      });
     }
 
     const guideTabs = [
@@ -1067,13 +1125,6 @@
     }, 'Hotspot receiver URL copied to clipboard!');
 
     // Best Audio Output Tip (Square Shape with Curved Edges Overlay)
-    const bestAudioTipModal = document.getElementById('bestAudioTipModal');
-    const btnCloseAudioTipModal = document.getElementById('btnCloseAudioTipModal');
-    const btnGotItAudioTip = document.getElementById('btnGotItAudioTip');
-    const chkDontShowFidelityOverlay = document.getElementById('chkDontShowFidelityOverlay');
-    const btnOpenBestAudioOverlay = document.getElementById('btnOpenBestAudioOverlay');
-
-    const openAudioTip = () => openDialog(bestAudioTipModal);
     const closeAudioTip = () => {
       if (chkDontShowFidelityOverlay && chkDontShowFidelityOverlay.checked) {
         localStorage.setItem('sonora_best_audio_tip_dismissed', '1');
@@ -1081,16 +1132,29 @@
       closeDialog(bestAudioTipModal);
     };
 
-    if (btnCloseAudioTipModal) btnCloseAudioTipModal.addEventListener('click', closeAudioTip);
-    if (btnGotItAudioTip) btnGotItAudioTip.addEventListener('click', closeAudioTip);
-    if (btnOpenBestAudioOverlay) btnOpenBestAudioOverlay.addEventListener('click', openAudioTip);
-    if (btnTipOpenGuide) btnTipOpenGuide.addEventListener('click', openAudioTip);
+    if (btnCloseAudioTipModal) {
+      btnCloseAudioTipModal.addEventListener('click', (e) => {
+        e.preventDefault();
+        closeAudioTip();
+      });
+    }
+    if (btnGotItAudioTip) {
+      btnGotItAudioTip.addEventListener('click', (e) => {
+        e.preventDefault();
+        closeAudioTip();
+      });
+    }
+    if (btnOpenBestAudioOverlay) {
+      btnOpenBestAudioOverlay.addEventListener('click', openAudioTip);
+    }
 
-    // Auto-reveal on first visit
+    // Auto-reveal on first visit only if guide modal is not open
     const isAudioTipDismissed = localStorage.getItem('sonora_best_audio_tip_dismissed');
     if (isAudioTipDismissed !== '1' && bestAudioTipModal) {
       setTimeout(() => {
-        openDialog(bestAudioTipModal);
+        if (!guideModal || !guideModal.open) {
+          openDialog(bestAudioTipModal);
+        }
       }, 450);
     }
 
