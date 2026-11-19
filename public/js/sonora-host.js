@@ -455,7 +455,7 @@
 
     const savedDelay = localStorage.getItem('sonora_buffer_delay_v3');
     if (savedDelay && hostDelaySlider) {
-      const parsedDelay = Math.max(20, Math.min(400, parseInt(savedDelay, 10) || 35));
+      const parsedDelay = Math.max(20, Math.min(600, parseInt(savedDelay, 10) || 35));
       hostDelaySlider.value = String(parsedDelay);
       hostDelayValue.textContent = `${parsedDelay}ms`;
       const stageCoord = document.querySelector('.stage-coordinate');
@@ -640,7 +640,7 @@
     audioEngine.setMode(currentMode === 'STEREO' ? 'PARTY' : 'DOLBY');
 
     const savedDelay = parseInt(localStorage.getItem('sonora_buffer_delay_v3') || '', 10);
-    if (Number.isFinite(savedDelay) && savedDelay >= 20 && savedDelay <= 400) {
+    if (Number.isFinite(savedDelay) && savedDelay >= 20 && savedDelay <= 600) {
       audioEngine.setBroadcastDelay(savedDelay);
     }
 
