@@ -984,6 +984,34 @@
     btnOpenGoodToKnow.addEventListener('click', openGuide);
     btnCloseGuideModal.addEventListener('click', () => closeDialog(guideModal));
 
+    // Best Audio Output Tip (Square Shape with Curved Edges Overlay)
+    const bestAudioTipModal = document.getElementById('bestAudioTipModal');
+    const btnCloseAudioTipModal = document.getElementById('btnCloseAudioTipModal');
+    const btnGotItAudioTip = document.getElementById('btnGotItAudioTip');
+    const chkDontShowFidelityOverlay = document.getElementById('chkDontShowFidelityOverlay');
+    const btnOpenBestAudioOverlay = document.getElementById('btnOpenBestAudioOverlay');
+
+    const openAudioTip = () => openDialog(bestAudioTipModal);
+    const closeAudioTip = () => {
+      if (chkDontShowFidelityOverlay && chkDontShowFidelityOverlay.checked) {
+        localStorage.setItem('sonora_best_audio_tip_dismissed', '1');
+      }
+      closeDialog(bestAudioTipModal);
+    };
+
+    if (btnCloseAudioTipModal) btnCloseAudioTipModal.addEventListener('click', closeAudioTip);
+    if (btnGotItAudioTip) btnGotItAudioTip.addEventListener('click', closeAudioTip);
+    if (btnOpenBestAudioOverlay) btnOpenBestAudioOverlay.addEventListener('click', openAudioTip);
+    if (btnTipOpenGuide) btnTipOpenGuide.addEventListener('click', openAudioTip);
+
+    // Auto-reveal on first visit
+    const isAudioTipDismissed = localStorage.getItem('sonora_best_audio_tip_dismissed');
+    if (isAudioTipDismissed !== '1' && bestAudioTipModal) {
+      setTimeout(() => {
+        openDialog(bestAudioTipModal);
+      }, 450);
+    }
+
     const copyLink = async () => {
       let url = receiverUrl;
       if (!url) {

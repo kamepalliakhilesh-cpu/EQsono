@@ -60,6 +60,13 @@
       </nav>
 
       <div class="sidebar-bottom">
+        <button class="sidebar-link" id="btnOpenBestAudioOverlay" type="button">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+          </svg>
+          <span>Best audio tips</span>
+        </button>
+
         <button class="sidebar-link" id="btnOpenGuide" type="button">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <circle cx="12" cy="12" r="10"></circle>
@@ -692,6 +699,85 @@
     <p class="card-caption">
       Triggering any channel sends an enveloped test tone and vibrates the assigned receiver.
     </p>
+  </dialog>
+
+  <!-- Native Modal Dialog: Best Audio Output Tip (Square Shape with Curved Edges Overlay) -->
+  <dialog class="app-dialog audio-fidelity-overlay" id="bestAudioTipModal" closedby="any" aria-labelledby="bestAudioTipTitle">
+    <form method="dialog">
+      <button class="modal-close" id="btnCloseAudioTipModal" type="submit" value="close" aria-label="Close">✕</button>
+    </form>
+
+    <div class="fidelity-overlay-header">
+      <div class="fidelity-badge-row">
+        <span class="fidelity-badge">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path>
+          </svg>
+          Pro Tip · Audio Fidelity
+        </span>
+      </div>
+      <h2 id="bestAudioTipTitle">Which connection provides the best audio output?</h2>
+      <p class="fidelity-subtitle">
+        Standard home Wi-Fi suffers from radio interference and buffering delays. For <strong>crystal-clear, unbuffered studio sound</strong>, use one of these two direct connections:
+      </p>
+    </div>
+
+    <div class="fidelity-options-container">
+      <!-- Method 1: USB Cable (Ranked #1 Best) -->
+      <div class="fidelity-card fidelity-card-primary">
+        <div class="fidelity-card-badge">Rank 1 · Best Sound (0.0ms Jitter)</div>
+        <div class="fidelity-card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="7" y="2" width="10" height="20" rx="2"></rect>
+            <line x1="11" y1="18" x2="13" y2="18"></line>
+          </svg>
+          Direct USB Cable (Single or Multi-Phone)
+        </div>
+        <p class="fidelity-card-summary">Physical wire eliminates 100% of Wi-Fi drops and buffering. Sub-millisecond latency (&lt;0.8ms) with lossless CD-quality audio.</p>
+        <div class="fidelity-steps">
+          <strong>How to connect:</strong>
+          <ol>
+            <li>Plug your phone(s) into your computer with a USB data cable. <em>(Use a powered USB hub for multiple phones)</em>.</li>
+            <li>On your phone, enable <strong>Settings → Hotspot &amp; Tethering → USB Tethering: ON</strong>.</li>
+            <li>In the EQsono <strong>Network box</strong>, click the <strong>USB Tethering</strong> IP chip and scan the QR code on your phone.</li>
+          </ol>
+        </div>
+      </div>
+
+      <!-- Method 2: Laptop 5GHz Hotspot (Ranked #2 Best Wireless) -->
+      <div class="fidelity-card fidelity-card-secondary">
+        <div class="fidelity-card-badge">Rank 2 · Best Wireless (2–5ms Latency)</div>
+        <div class="fidelity-card-title">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
+            <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
+            <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+            <line x1="12" y1="20" x2="12.01" y2="20"></line>
+          </svg>
+          Laptop 5GHz Mobile Hotspot
+        </div>
+        <p class="fidelity-card-summary">Direct PC-to-phone 5GHz wireless without going through a congested home router.</p>
+        <div class="fidelity-steps">
+          <strong>How to connect:</strong>
+          <ol>
+            <li>Turn on <strong>Mobile Hotspot</strong> in Windows Settings (set network band to <strong>5 GHz</strong>).</li>
+            <li>Connect all phones directly to your laptop's hotspot network.</li>
+            <li>Open <code>http://192.168.137.1:3000/receiver</code> on the connected phones.</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Actions -->
+    <div class="fidelity-overlay-footer">
+      <label class="fidelity-dont-show">
+        <input type="checkbox" id="chkDontShowFidelityOverlay">
+        <span>Don't show this automatically on next visit</span>
+      </label>
+      <button class="primary-action-button" id="btnGotItAudioTip" type="button">
+        <span>Got it, let's start</span>
+      </button>
+    </div>
   </dialog>
 
   <!-- Native Modal Dialog: Connection Guide -->

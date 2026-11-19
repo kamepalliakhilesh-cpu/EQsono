@@ -1689,6 +1689,206 @@ dialog.app-dialog.app-dialog-wide {
   max-width: 520px;
 }
 
+/* Square-Shaped Overlay with Curved Edges: Best Audio Output Tip */
+dialog.app-dialog.audio-fidelity-overlay {
+  max-width: 540px;
+  width: min(540px, calc(100% - 32px));
+  max-height: min(640px, 92vh);
+  border-radius: 24px;
+  background: var(--surface-card);
+  border: 1px solid rgba(45, 212, 191, 0.35);
+  box-shadow: 0 28px 72px rgba(0, 0, 0, 0.85), 0 0 36px rgba(45, 212, 191, 0.12);
+  padding: 26px 26px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  animation: overlayPopIn 240ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes overlayPopIn {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.fidelity-overlay-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fidelity-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fidelity-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(45, 212, 191, 0.14);
+  color: var(--accent);
+  border: 1px solid rgba(45, 212, 191, 0.3);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 3px 9px;
+  border-radius: 6px;
+}
+
+.fidelity-overlay-header h2 {
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.3;
+  margin: 2px 0 0;
+}
+
+.fidelity-subtitle {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  line-height: 1.45;
+  margin: 0;
+}
+
+.fidelity-options-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  max-height: calc(88vh - 200px);
+  padding-right: 4px;
+}
+
+.fidelity-card {
+  background: var(--surface-sunken);
+  border: 1px solid var(--line-subtle);
+  border-radius: 14px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color 150ms ease;
+}
+
+.fidelity-card:hover {
+  border-color: var(--line-strong);
+}
+
+.fidelity-card-primary {
+  background: rgba(45, 212, 191, 0.05);
+  border-color: rgba(45, 212, 191, 0.35);
+}
+
+.fidelity-card-primary:hover {
+  border-color: var(--accent);
+}
+
+.fidelity-card-badge {
+  align-self: flex-start;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--surface-raised);
+  color: var(--text-secondary);
+  border: 1px solid var(--line-subtle);
+}
+
+.fidelity-card-primary .fidelity-card-badge {
+  background: rgba(45, 212, 191, 0.16);
+  color: var(--accent);
+  border-color: rgba(45, 212, 191, 0.3);
+}
+
+.fidelity-card-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.fidelity-card-summary {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.fidelity-steps {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--line-subtle);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 12px;
+}
+
+.fidelity-steps strong {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.fidelity-steps ol {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.fidelity-steps li strong {
+  display: inline;
+  color: var(--text-primary);
+  text-transform: none;
+  font-size: 12px;
+}
+
+.fidelity-overlay-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-subtle);
+  margin-top: 2px;
+}
+
+.fidelity-dont-show {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.fidelity-dont-show input[type="checkbox"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.fidelity-dont-show:hover {
+  color: var(--text-secondary);
+}
+
 dialog.app-dialog:modal {
   overscroll-behavior: contain;
 }
